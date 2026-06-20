@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Confirmación de desistimiento</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+
+<div style="background: #f8f9fa; border-radius: 8px; padding: 30px;">
+
+  <h2 style="color: #27ae60; margin-top: 0;">
+    ✅ Hemos recibido tu solicitud de desistimiento
+  </h2>
+
+  <p>Hola <strong>{nombre}</strong>,</p>
+
+  <p>
+    Confirmamos la recepción de tu solicitud de desistimiento para el pedido
+    <strong>{referencia}</strong>, registrada el <strong>{fecha}</strong>.
+  </p>
+
+  <div style="background: #fff; border: 1px solid #dee2e6; border-radius: 6px; padding: 16px; margin: 20px 0;">
+    <h4 style="margin-top: 0;">Detalles de tu solicitud</h4>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr>
+        <td style="padding: 6px 0; color: #666; width: 40%;">Número de solicitud:</td>
+        <td style="padding: 6px 0;"><strong>#JOSRA-{id_desistimiento}</strong></td>
+      </tr>
+      <tr>
+        <td style="padding: 6px 0; color: #666;">Pedido:</td>
+        <td style="padding: 6px 0;"><strong>{referencia}</strong></td>
+      </tr>
+      <tr>
+        <td style="padding: 6px 0; color: #666;">Motivo indicado:</td>
+        <td style="padding: 6px 0;">{motivo}</td>
+      </tr>
+      <tr>
+        <td style="padding: 6px 0; color: #666;">Fecha y hora:</td>
+        <td style="padding: 6px 0;">{fecha}</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>
+    Este email constituye el acuse de recibo de tu solicitud de desistimiento según lo
+    establecido en el artículo 11 bis de la Directiva (UE) 2023/2673 sobre los derechos
+    de los consumidores.
+  </p>
+
+  <p>
+    Nuestro equipo procesará tu solicitud y te contactará para indicarte los siguientes
+    pasos (instrucciones de devolución, reembolso, etc.) en el menor tiempo posible
+    y dentro de los plazos legales establecidos.
+  </p>
+
+  <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+
+  <p style="font-size: 12px; color: #999;">
+    Este email ha sido generado automáticamente por {shop_name}. Por favor, consérvalo
+    como acuse de recibo de tu solicitud de desistimiento. Si tienes alguna duda, puedes
+    responder a este email o contactar con nuestro servicio de atención al cliente.
+  </p>
+
+  <p style="font-size: 12px; color: #999;">
+    <strong>{shop_name}</strong>
+  </p>
+
+</div>
+
+</body>
+</html>

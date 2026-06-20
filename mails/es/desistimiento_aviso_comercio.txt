@@ -1,0 +1,13 @@
+NUEVA SOLICITUD DE DESISTIMIENTO — {shop_name}
+
+Nº Solicitud: #JOSRA-{id_desistimiento}
+Cliente: {nombre}
+Email: {email}
+Referencia pedido: {referencia}
+Motivo: {motivo}
+Fecha y hora: {fecha}
+
+El pedido ha sido marcado como "En desistimiento" en el backoffice.
+Accede para gestionar esta solicitud.
+
+Generado por josradesistimiento — Directiva (UE) 2023/2673

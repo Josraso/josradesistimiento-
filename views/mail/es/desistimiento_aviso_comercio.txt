@@ -1,0 +1,10 @@
+NUEVA SOLICITUD DE DESISTIMIENTO — {shop_name}
+
+Nº Solicitud: #JOSRA-{id_desistimiento}
+Cliente: {nombre}
+Email: {email}
+Referencia: {referencia}
+Motivo: {motivo}
+Fecha: {fecha}
+
+Accede al backoffice para gestionar esta solicitud.

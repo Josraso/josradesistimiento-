@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Nueva solicitud de desistimiento</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f4;padding:30px 0;">
+  <tr><td align="center">
+    <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+
+      <!-- CABECERA -->
+      <tr>
+        <td style="background:#2c3e50;padding:24px 32px;">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td>
+                <span style="color:#fff;font-size:20px;font-weight:bold;">⚠️ Nueva solicitud de desistimiento</span>
+              </td>
+              <td align="right">
+                <span style="color:#ecf0f1;font-size:12px;">{shop_name}</span>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- ALERTA -->
+      <tr>
+        <td style="background:#e74c3c;padding:12px 32px;">
+          <p style="margin:0;color:#fff;font-size:14px;">
+            Se ha recibido una nueva solicitud de desistimiento que requiere tu atención.
+          </p>
+        </td>
+      </tr>
+
+      <!-- DATOS -->
+      <tr>
+        <td style="padding:28px 32px;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e0e0e0;border-radius:6px;overflow:hidden;">
+            <tr style="background:#f8f9fa;">
+              <td colspan="2" style="padding:12px 16px;font-size:12px;font-weight:bold;color:#666;text-transform:uppercase;letter-spacing:0.5px;">
+                Detalles de la solicitud
+              </td>
+            </tr>
+            <tr style="border-top:1px solid #e0e0e0;">
+              <td style="padding:12px 16px;color:#666;font-size:13px;width:40%;border-right:1px solid #e0e0e0;background:#fafafa;">Nº Solicitud</td>
+              <td style="padding:12px 16px;font-size:14px;font-weight:bold;color:#e74c3c;">#JOSRA-{id_desistimiento}</td>
+            </tr>
+            <tr style="border-top:1px solid #e0e0e0;">
+              <td style="padding:12px 16px;color:#666;font-size:13px;background:#fafafa;">Cliente</td>
+              <td style="padding:12px 16px;font-size:13px;">{nombre}</td>
+            </tr>
+            <tr style="border-top:1px solid #e0e0e0;">
+              <td style="padding:12px 16px;color:#666;font-size:13px;background:#fafafa;">Email</td>
+              <td style="padding:12px 16px;font-size:13px;"><a href="mailto:{email}" style="color:#2980b9;">{email}</a></td>
+            </tr>
+            <tr style="border-top:1px solid #e0e0e0;">
+              <td style="padding:12px 16px;color:#666;font-size:13px;background:#fafafa;">Referencia pedido</td>
+              <td style="padding:12px 16px;font-size:14px;font-weight:bold;">{referencia}</td>
+            </tr>
+            <tr style="border-top:1px solid #e0e0e0;">
+              <td style="padding:12px 16px;color:#666;font-size:13px;background:#fafafa;">Motivo</td>
+              <td style="padding:12px 16px;font-size:13px;">{motivo}</td>
+            </tr>
+            <tr style="border-top:1px solid #e0e0e0;">
+              <td style="padding:12px 16px;color:#666;font-size:13px;background:#fafafa;">Fecha y hora</td>
+              <td style="padding:12px 16px;font-size:13px;color:#27ae60;font-weight:bold;">{fecha}</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- CTA -->
+      <tr>
+        <td style="padding:0 32px 28px;">
+          <p style="margin:0 0 16px;font-size:13px;color:#555;">
+            El pedido ha sido marcado automáticamente como <strong>"En desistimiento"</strong> en tu backoffice.
+            Accede para gestionar esta solicitud y actualizar el estado.
+          </p>
+          <table cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="background:#2c3e50;border-radius:4px;padding:12px 24px;">
+                <a href="{shop_url}admin" style="color:#fff;text-decoration:none;font-size:13px;font-weight:bold;">
+                  Ir al backoffice →
+                </a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- PIE -->
+      <tr>
+        <td style="background:#f8f9fa;border-top:1px solid #e0e0e0;padding:16px 32px;">
+          <p style="margin:0;font-size:11px;color:#999;">
+            Este aviso ha sido generado automáticamente por el módulo <em>josradesistimiento</em> de <strong>{shop_name}</strong>.
+            Acuse de recibo registrado conforme a la Directiva (UE) 2023/2673.
+          </p>
+        </td>
+      </tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>

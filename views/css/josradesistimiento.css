@@ -1,0 +1,291 @@
+/**
+ * josradesistimiento.css
+ * Estilos del módulo de desistimiento — Compatible PS 1.7 / 8 / 9
+ */
+
+/* ============================================================
+   WIDGET BOTÓN (footer, producto, cuenta, pedido)
+   ============================================================ */
+
+.josra-desistimiento-widget {
+  font-family: inherit;
+}
+
+/* Footer */
+.josra-footer-block {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  margin-top: 12px;
+}
+
+.josra-footer-block .josra-texto-legal {
+  font-size: 12px;
+  opacity: 0.8;
+  flex: 1 1 200px;
+}
+
+/* Pedido / producto */
+.josra-pedido-block,
+.josra-producto-block {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.josra-plazo-info {
+  color: #666;
+  font-size: 11px;
+}
+
+/* ============================================================
+   BOTÓN PRINCIPAL
+   ============================================================ */
+
+.josra-btn-desistir {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 4px;
+  color: #fff !important;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none !important;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.josra-btn-desistir:hover {
+  opacity: 0.88;
+  transform: translateY(-1px);
+}
+
+.josra-btn-desistir:active {
+  transform: translateY(0);
+}
+
+.josra-btn-sm {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+/* Variante outline (ficha producto) */
+.josra-btn-outline {
+  background: transparent !important;
+  border: 2px solid currentColor !important;
+}
+
+.josra-icon {
+  font-size: 16px;
+  vertical-align: middle;
+}
+
+/* ============================================================
+   PÁGINAS DE FORMULARIO / CONFIRMACIÓN
+   ============================================================ */
+
+.josra-page-formulario,
+.josra-page-confirmacion,
+.josra-page-retencion,
+.josra-page-error {
+  max-width: 680px;
+  margin: 0 auto;
+  padding-bottom: 40px;
+}
+
+.josra-aviso-legal {
+  background: #eaf4fb;
+  border-left: 4px solid #3498db;
+  border-radius: 4px;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+}
+
+.josra-gdpr-notice {
+  background: #f8f9fa;
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin: 16px 0;
+  color: #666;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.josra-form-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+
+.josra-btn-submit {
+  min-width: 220px;
+}
+
+.josra-btn-cancelar {
+  color: #666;
+}
+
+/* ============================================================
+   CONFIRMACIÓN Y ACUSE
+   ============================================================ */
+
+.josra-acuse {
+  border-radius: 6px;
+  margin-bottom: 24px;
+}
+
+.josra-acuse h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.josra-numero-solicitud {
+  margin-top: 12px;
+  font-size: 16px;
+  color: #155724;
+}
+
+/* ============================================================
+   BLOQUE DE RETENCIÓN
+   ============================================================ */
+
+.josra-retencion-bloque {
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  margin-bottom: 28px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.josra-retencion-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  border-radius: 8px 8px 0 0;
+  padding: 14px 20px;
+}
+
+.josra-retencion-header h5 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.josra-opciones-retencion {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.josra-opcion {
+  border: 2px solid #dee2e6;
+  border-radius: 8px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.josra-opcion:has(input:checked) {
+  border-color: #667eea;
+  background: #f0f2ff;
+}
+
+.josra-opcion-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  margin: 0;
+}
+
+.josra-opcion-label input[type="radio"] {
+  margin-top: 4px;
+  flex-shrink: 0;
+  accent-color: #667eea;
+  width: 18px;
+  height: 18px;
+}
+
+.josra-opcion-contenido {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.josra-opcion-titulo {
+  font-weight: 600;
+  font-size: 14px;
+  color: #333;
+}
+
+.josra-opcion-desc {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.4;
+}
+
+.josra-retencion-actions {
+  margin-top: 16px;
+}
+
+/* ============================================================
+   INFO ADICIONAL
+   ============================================================ */
+
+.josra-info-adicional {
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 18px 22px;
+  margin-top: 24px;
+}
+
+.josra-info-adicional h6 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.josra-info-adicional ul {
+  padding-left: 20px;
+  margin-bottom: 16px;
+}
+
+.josra-info-adicional li {
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: #555;
+}
+
+.josra-volver {
+  margin-top: 20px;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 576px) {
+  .josra-footer-block {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .josra-form-actions {
+    flex-direction: column;
+  }
+
+  .josra-btn-submit,
+  .josra-btn-cancelar {
+    width: 100%;
+    text-align: center;
+  }
+}

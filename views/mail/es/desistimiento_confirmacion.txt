@@ -1,0 +1,18 @@
+Confirmación de solicitud de desistimiento — {shop_name}
+
+Hola {nombre},
+
+Hemos recibido correctamente tu solicitud de desistimiento para el pedido {referencia}, registrada el {fecha}.
+
+Número de solicitud: #JOSRA-{id_desistimiento}
+Pedido: {referencia}
+Motivo: {motivo}
+Fecha y hora: {fecha}
+
+Este mensaje constituye el acuse de recibo de tu solicitud de desistimiento según el artículo 11 bis de la Directiva (UE) 2023/2673.
+
+Nuestro equipo se pondrá en contacto contigo para indicarte los pasos a seguir.
+
+Conserva este email como justificante de tu solicitud.
+
+{shop_name}
