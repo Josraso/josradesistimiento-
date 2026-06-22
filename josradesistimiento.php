@@ -17,6 +17,21 @@
  *   reply-to de los correos de notificación
  * - Motivos de desistimiento editables por idioma desde el backoffice
  * - "Otro motivo" puede exigir un detalle obligatorio al cliente
+ *
+ * v1.3.0:
+ * - Corrige el "Otro motivo": ahora es una entrada fija del sistema
+ *   (clave "otro" inmutable, solo el texto es editable), por lo que
+ *   "exigir detalle" funciona siempre, sin depender del formato que
+ *   use el admin al editar la lista de motivos
+ * - Filtros y exenciones: exclusión de productos/categorías/fabricantes/
+ *   proveedores del derecho de desistimiento o ampliación de su plazo,
+ *   filtros por transportista y estado de pedido, y exclusión B2B
+ *   (por grupo de cliente o por empresa indicada en el pedido)
+ * - Gestión de solicitudes en backoffice: KPIs, aprobar/rechazar con
+ *   motivo, marcar recibido/reembolsado, notas internas y cierre
+ *   automático al reembolsar el pedido
+ * - Acuse de recibo en PDF descargable adjunto al email, y tarea cron
+ *   que expira solicitudes vencidas y envía recordatorios de SLA
  */
 
 if (!defined('_PS_VERSION_')) {
@@ -31,7 +46,7 @@ class Josradesistimiento extends Module
     {
         $this->name          = 'josradesistimiento';
         $this->tab           = 'front_office_features';
-        $this->version       = '1.2.0';
+        $this->version       = '1.3.0';
         $this->author        = 'josra';
         $this->need_instance = 0;
         $this->bootstrap     = true;
@@ -69,34 +84,62 @@ class Josradesistimiento extends Module
 
     private function installSql()
     {
-        return Db::getInstance()->execute('
+        $ok = Db::getInstance()->execute('
             CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'josra_desistimiento` (
-                `id_desistimiento`  INT(11) UNSIGNED NOT NULL AUTO_INCREMENT,
-                `id_order`          INT(11) UNSIGNED NOT NULL DEFAULT 0,
-                `id_customer`       INT(11) UNSIGNED NOT NULL DEFAULT 0,
-                `reference`         VARCHAR(64)  NOT NULL DEFAULT \'\',
-                `nombre`            VARCHAR(150) NOT NULL DEFAULT \'\',
-                `email`             VARCHAR(255) NOT NULL DEFAULT \'\',
-                `motivo`            VARCHAR(20)  NOT NULL DEFAULT \'\',
-                `comentario`        TEXT,
-                `estado`            VARCHAR(20)  NOT NULL DEFAULT \'pendiente\',
-                `opcion_retencion`  VARCHAR(20)  NOT NULL DEFAULT \'\',
-                `ip`                VARCHAR(45)  NOT NULL DEFAULT \'\',
-                `fecha_solicitud`   DATETIME     NOT NULL,
-                `fecha_procesado`   DATETIME,
-                `token`             VARCHAR(64)  NOT NULL DEFAULT \'\',
+                `id_desistimiento`     INT(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+                `id_order`             INT(11) UNSIGNED NOT NULL DEFAULT 0,
+                `id_customer`          INT(11) UNSIGNED NOT NULL DEFAULT 0,
+                `reference`            VARCHAR(64)  NOT NULL DEFAULT \'\',
+                `nombre`               VARCHAR(150) NOT NULL DEFAULT \'\',
+                `email`                VARCHAR(255) NOT NULL DEFAULT \'\',
+                `motivo`               VARCHAR(20)  NOT NULL DEFAULT \'\',
+                `comentario`           TEXT,
+                `estado`               VARCHAR(20)  NOT NULL DEFAULT \'pendiente\',
+                `opcion_retencion`     VARCHAR(20)  NOT NULL DEFAULT \'\',
+                `ip`                   VARCHAR(45)  NOT NULL DEFAULT \'\',
+                `fecha_solicitud`      DATETIME     NOT NULL,
+                `fecha_procesado`      DATETIME,
+                `fecha_limite`         DATETIME     NULL,
+                `motivo_rechazo`       TEXT,
+                `notas_internas`       TEXT,
+                `bienes_recibidos`     TINYINT(1)   NOT NULL DEFAULT 0,
+                `reembolsado`          TINYINT(1)   NOT NULL DEFAULT 0,
+                `recordatorio_enviado` TINYINT(1)   NOT NULL DEFAULT 0,
+                `fecha_aprobado`       DATETIME     NULL,
+                `fecha_rechazado`      DATETIME     NULL,
+                `fecha_recibido`       DATETIME     NULL,
+                `fecha_reembolsado`    DATETIME     NULL,
+                `auditoria`            TEXT,
+                `token`                VARCHAR(64)  NOT NULL DEFAULT \'\',
                 PRIMARY KEY (`id_desistimiento`),
                 KEY `idx_reference` (`reference`),
                 KEY `idx_customer`  (`id_customer`),
                 KEY `idx_estado`    (`estado`)
             ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8mb4
         ');
+
+        $ok = $ok && Db::getInstance()->execute('
+            CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'josra_desistimiento_exclusion` (
+                `id_exclusion`    INT(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+                `tipo`            VARCHAR(20) NOT NULL DEFAULT \'producto\',
+                `id_objeto`       INT(11) UNSIGNED NOT NULL DEFAULT 0,
+                `modo`            VARCHAR(20) NOT NULL DEFAULT \'excluir\',
+                `dias_ampliados`  INT(11) NULL,
+                `date_add`        DATETIME NOT NULL,
+                PRIMARY KEY (`id_exclusion`),
+                KEY `idx_tipo_objeto` (`tipo`, `id_objeto`)
+            ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8mb4
+        ');
+
+        return $ok;
     }
 
     private function uninstallSql()
     {
         return Db::getInstance()->execute(
             'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'josra_desistimiento`'
+        ) && Db::getInstance()->execute(
+            'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'josra_desistimiento_exclusion`'
         );
     }
 
@@ -167,10 +210,19 @@ class Josradesistimiento extends Module
         Configuration::updateValue('JOSRA_DESIST_EMAIL_REMITENTE', '');
         Configuration::updateValue('JOSRA_DESIST_EMAIL_REPLYTO', '');
         Configuration::updateValue('JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO', 0);
+
+        // ---- Filtros y exenciones (v1.2.1) ----
+        Configuration::updateValue('JOSRA_DESIST_CARRIERS_EXCLUIDOS', '');
+        Configuration::updateValue('JOSRA_DESIST_ESTADOS_EXCLUIDOS', '');
+        Configuration::updateValue('JOSRA_DESIST_GRUPOS_B2B_EXCLUIDOS', '');
+        Configuration::updateValue('JOSRA_DESIST_EXCLUIR_SI_EMPRESA', 0);
+        Configuration::updateValue('JOSRA_DESIST_CRON_TOKEN', Tools::passwdGen(32));
         foreach (Language::getLanguages(false) as $lang) {
-            Configuration::updateValue('JOSRA_DESIST_POLITICA_TEXTO_' . (int) $lang['id_lang'], '', true);
+            $idLang = (int) $lang['id_lang'];
+            Configuration::updateValue('JOSRA_DESIST_POLITICA_TEXTO_' . $idLang, '', true);
+            Configuration::updateValue('JOSRA_DESIST_MOTIVO_OTRO_LABEL_' . $idLang, $this->l('Otro motivo'), true);
             Configuration::updateValue(
-                'JOSRA_DESIST_MOTIVOS_' . (int) $lang['id_lang'],
+                'JOSRA_DESIST_MOTIVOS_' . $idLang,
                 $this->serializarMotivos($this->getMotivosPorDefecto()),
                 true
             );
@@ -189,13 +241,18 @@ class Josradesistimiento extends Module
             'JOSRA_DESIST_GASTOS_DEVOLUCION', 'JOSRA_DESIST_DIRECCION_DEVOLUCION',
             'JOSRA_DESIST_POLITICA_URL', 'JOSRA_DESIST_EMAIL_REMITENTE',
             'JOSRA_DESIST_EMAIL_REPLYTO', 'JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO',
+            'JOSRA_DESIST_CARRIERS_EXCLUIDOS', 'JOSRA_DESIST_ESTADOS_EXCLUIDOS',
+            'JOSRA_DESIST_GRUPOS_B2B_EXCLUIDOS', 'JOSRA_DESIST_EXCLUIR_SI_EMPRESA',
+            'JOSRA_DESIST_CRON_TOKEN',
             self::ESTADO_CONFIG_KEY,
         ] as $key) {
             Configuration::deleteByName($key);
         }
         foreach (Language::getLanguages(false) as $lang) {
-            Configuration::deleteByName('JOSRA_DESIST_POLITICA_TEXTO_' . (int) $lang['id_lang']);
-            Configuration::deleteByName('JOSRA_DESIST_MOTIVOS_' . (int) $lang['id_lang']);
+            $idLang = (int) $lang['id_lang'];
+            Configuration::deleteByName('JOSRA_DESIST_POLITICA_TEXTO_' . $idLang);
+            Configuration::deleteByName('JOSRA_DESIST_MOTIVOS_' . $idLang);
+            Configuration::deleteByName('JOSRA_DESIST_MOTIVO_OTRO_LABEL_' . $idLang);
         }
         return true;
     }
@@ -211,6 +268,7 @@ class Josradesistimiento extends Module
             'displayHeader',
             'displayAdminOrderMainBottom',   // PS 1.7.7+ / 8 / 9: panel inferior del pedido en admin
             'displayAdminOrder',             // PS 1.7 legacy
+            'actionOrderStatusPostUpdate',   // cierre automático al reembolsar el pedido
         ] as $hook) {
             $this->registerHook($hook);
         }
@@ -224,12 +282,31 @@ class Josradesistimiento extends Module
     public function getContent()
     {
         $output = '';
+
         if (Tools::isSubmit('submit_josra_desistimiento')) {
             $output .= $this->postProcess();
         }
+        if (Tools::isSubmit('submit_josra_exclusion_add')) {
+            $output .= $this->postProcessExclusionAdd();
+        }
+        if (Tools::isSubmit('josra_exclusion_delete')) {
+            $output .= $this->postProcessExclusionDelete();
+        }
+        if (Tools::isSubmit('josra_accion')) {
+            $output .= $this->postProcessAccionSolicitud();
+        }
+        if (Tools::isSubmit('submit_josra_regenerar_token')) {
+            Configuration::updateValue('JOSRA_DESIST_CRON_TOKEN', Tools::passwdGen(32));
+            $output .= $this->displayConfirmation($this->l('Token de la tarea cron regenerado. Actualiza la URL en tu planificador.'));
+        }
+
         // Aseguramos que el estado existe aunque sea una actualización
         $this->installOrderState();
+
         $output .= $this->renderConfigForm();
+        $output .= $this->renderExclusionesPanel();
+        $output .= $this->renderCronPanel();
+        $output .= $this->renderKpiPanel();
         $output .= $this->renderSolicitudesTable();
         return $output;
     }
@@ -254,6 +331,10 @@ class Josradesistimiento extends Module
             'JOSRA_DESIST_EMAIL_REMITENTE'         => pSQL(Tools::getValue('JOSRA_DESIST_EMAIL_REMITENTE')),
             'JOSRA_DESIST_EMAIL_REPLYTO'           => pSQL(Tools::getValue('JOSRA_DESIST_EMAIL_REPLYTO')),
             'JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO' => (int) Tools::getValue('JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO'),
+            'JOSRA_DESIST_CARRIERS_EXCLUIDOS'      => implode(',', array_filter(array_map('intval', (array) Tools::getValue('JOSRA_DESIST_CARRIERS_EXCLUIDOS', [])))),
+            'JOSRA_DESIST_ESTADOS_EXCLUIDOS'       => implode(',', array_filter(array_map('intval', (array) Tools::getValue('JOSRA_DESIST_ESTADOS_EXCLUIDOS', [])))),
+            'JOSRA_DESIST_GRUPOS_B2B_EXCLUIDOS'    => implode(',', array_filter(array_map('intval', (array) Tools::getValue('JOSRA_DESIST_GRUPOS_B2B_EXCLUIDOS', [])))),
+            'JOSRA_DESIST_EXCLUIR_SI_EMPRESA'      => (int) Tools::getValue('JOSRA_DESIST_EXCLUIR_SI_EMPRESA'),
         ];
         foreach ($fields as $key => $value) {
             Configuration::updateValue($key, $value);
@@ -268,15 +349,18 @@ class Josradesistimiento extends Module
                 true
             );
             $lineas = $this->parsearMotivosTextarea(Tools::getValue('JOSRA_DESIST_MOTIVOS_' . $idLang, ''));
+            unset($lineas['otro']);
             if (empty($lineas)) {
                 $lineas = $this->getMotivosPorDefecto();
-            }
-            if (!isset($lineas['otro'])) {
-                $lineas['otro'] = $this->l('Otro motivo');
             }
             Configuration::updateValue(
                 'JOSRA_DESIST_MOTIVOS_' . $idLang,
                 $this->serializarMotivos($lineas),
+                true
+            );
+            Configuration::updateValue(
+                'JOSRA_DESIST_MOTIVO_OTRO_LABEL_' . $idLang,
+                pSQL(Tools::getValue('JOSRA_DESIST_MOTIVO_OTRO_LABEL_' . $idLang)) ?: $this->l('Otro motivo'),
                 true
             );
         }
@@ -289,8 +373,8 @@ class Josradesistimiento extends Module
      * ========================================================= */
 
     /**
-     * Lista de motivos por defecto. Se usa al instalar el módulo
-     * y como fallback si un idioma no tiene motivos configurados.
+     * Lista de motivos "normales" por defecto (sin contar "Otro motivo",
+     * que siempre se gestiona como entrada fija del sistema — ver getMotivoOtroLabel()).
      */
     public function getMotivosPorDefecto()
     {
@@ -300,12 +384,24 @@ class Josradesistimiento extends Module
             'no_esperado'     => $this->l('El producto no era lo esperado'),
             'retraso'         => $this->l('Tardó demasiado en llegar'),
             'defecto'         => $this->l('El producto llegó con defecto'),
-            'otro'            => $this->l('Otro motivo'),
         ];
     }
 
     /**
-     * Devuelve la lista de motivos (key => etiqueta traducida) para un idioma.
+     * Etiqueta de "Otro motivo" para un idioma. Su clave ('otro') es fija
+     * para que la opción "exigir detalle" pueda reconocerla siempre,
+     * independientemente de cómo el admin redacte el resto de la lista.
+     */
+    public function getMotivoOtroLabel($idLang = null)
+    {
+        $idLang = $idLang ?: (int) $this->context->language->id;
+        $label = Configuration::get('JOSRA_DESIST_MOTIVO_OTRO_LABEL_' . (int) $idLang);
+        return $label !== false && $label !== '' ? $label : $this->l('Otro motivo');
+    }
+
+    /**
+     * Devuelve la lista de motivos (key => etiqueta traducida) para un idioma,
+     * con "Otro motivo" siempre al final con clave fija "otro".
      * Lee la configuración editable del admin; si está vacía, usa el listado por defecto.
      */
     public function getMotivos($idLang = null)
@@ -313,19 +409,19 @@ class Josradesistimiento extends Module
         $idLang = $idLang ?: (int) $this->context->language->id;
         $raw = Configuration::get('JOSRA_DESIST_MOTIVOS_' . (int) $idLang);
         $motivos = $this->deserializarMotivos($raw);
+        unset($motivos['otro']);
 
         if (empty($motivos)) {
             $motivos = $this->getMotivosPorDefecto();
         }
-        if (!isset($motivos['otro'])) {
-            $motivos['otro'] = $this->l('Otro motivo');
-        }
+        $motivos['otro'] = $this->getMotivoOtroLabel($idLang);
         return $motivos;
     }
 
     /**
      * Convierte el textarea del admin ("clave|Etiqueta" por línea) en un array clave => etiqueta.
      * La clave se normaliza a un slug corto (encaja en la columna `motivo` VARCHAR(20)).
+     * La clave "otro" está reservada al sistema y se ignora aquí si aparece.
      */
     private function parsearMotivosTextarea($texto)
     {
@@ -343,7 +439,7 @@ class Josradesistimiento extends Module
                 $etiqueta = $linea;
             }
             $clave = Tools::substr(Tools::str2url($clave), 0, 20);
-            if ($clave === '') {
+            if ($clave === '' || $clave === 'otro') {
                 continue;
             }
             $motivos[$clave] = $etiqueta;
@@ -368,6 +464,20 @@ class Josradesistimiento extends Module
         return $this->parsearMotivosTextarea($raw);
     }
 
+    /**
+     * Convierte una lista de ids separados por coma guardada en Configuration
+     * en un array asociativo [id => 1] para marcar checkboxes en HelperForm.
+     */
+    public function idsConfigComoArrayMarcado($configKey)
+    {
+        $marcados = [];
+        $raw = (string) Configuration::get($configKey);
+        foreach (array_filter(array_map('intval', explode(',', $raw))) as $id) {
+            $marcados[$id] = 1;
+        }
+        return $marcados;
+    }
+
     private function renderConfigForm()
     {
         $helper = new HelperForm();
@@ -383,10 +493,14 @@ class Josradesistimiento extends Module
         $helper->token = Tools::getAdminTokenLite('AdminModules');
         $motivosPorIdioma = [];
         $politicaPorIdioma = [];
+        $motivoOtroPorIdioma = [];
         foreach (Language::getLanguages(false) as $lang) {
             $idLang = (int) $lang['id_lang'];
-            $motivosPorIdioma[$idLang]  = $this->serializarMotivos($this->getMotivos($idLang));
-            $politicaPorIdioma[$idLang] = Configuration::get('JOSRA_DESIST_POLITICA_TEXTO_' . $idLang);
+            $motivosCustom = $this->getMotivos($idLang);
+            unset($motivosCustom['otro']);
+            $motivosPorIdioma[$idLang]    = $this->serializarMotivos($motivosCustom);
+            $politicaPorIdioma[$idLang]   = Configuration::get('JOSRA_DESIST_POLITICA_TEXTO_' . $idLang);
+            $motivoOtroPorIdioma[$idLang] = $this->getMotivoOtroLabel($idLang);
         }
 
         $helper->tpl_vars = [
@@ -409,6 +523,11 @@ class Josradesistimiento extends Module
                 'JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO' => Configuration::get('JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO'),
                 'JOSRA_DESIST_POLITICA_TEXTO'         => $politicaPorIdioma,
                 'JOSRA_DESIST_MOTIVOS'                => $motivosPorIdioma,
+                'JOSRA_DESIST_MOTIVO_OTRO_LABEL'      => $motivoOtroPorIdioma,
+                'JOSRA_DESIST_CARRIERS_EXCLUIDOS'     => $this->idsConfigComoArrayMarcado('JOSRA_DESIST_CARRIERS_EXCLUIDOS'),
+                'JOSRA_DESIST_ESTADOS_EXCLUIDOS'      => $this->idsConfigComoArrayMarcado('JOSRA_DESIST_ESTADOS_EXCLUIDOS'),
+                'JOSRA_DESIST_GRUPOS_B2B_EXCLUIDOS'   => $this->idsConfigComoArrayMarcado('JOSRA_DESIST_GRUPOS_B2B_EXCLUIDOS'),
+                'JOSRA_DESIST_EXCLUIR_SI_EMPRESA'     => Configuration::get('JOSRA_DESIST_EXCLUIR_SI_EMPRESA'),
             ],
             'languages'   => $this->context->controller->getLanguages(),
             'id_language' => $this->context->language->id,
@@ -418,6 +537,23 @@ class Josradesistimiento extends Module
             ['id' => 'active_on',  'value' => 1, 'label' => $this->l('Sí')],
             ['id' => 'active_off', 'value' => 0, 'label' => $this->l('No')],
         ];
+
+        $idLangActual = (int) $this->context->language->id;
+
+        $carriersQuery = [];
+        foreach (Carrier::getCarriers($idLangActual, true) as $carrier) {
+            $carriersQuery[] = ['id_carrier' => (int) $carrier['id_carrier'], 'name' => $carrier['name']];
+        }
+
+        $orderStatesQuery = [];
+        foreach (OrderState::getOrderStates($idLangActual) as $orderState) {
+            $orderStatesQuery[] = ['id_order_state' => (int) $orderState['id_order_state'], 'name' => $orderState['name']];
+        }
+
+        $groupsQuery = [];
+        foreach (Group::getGroups($idLangActual) as $group) {
+            $groupsQuery[] = ['id_group' => (int) $group['id_group'], 'name' => $group['name']];
+        }
 
         return $helper->generateForm([[
             'form' => [
@@ -432,6 +568,7 @@ class Josradesistimiento extends Module
                     'retencion'   => $this->l('Retención'),
                     'textos'      => $this->l('Textos y Diseño'),
                     'notif'       => $this->l('Notificaciones'),
+                    'filtros'     => $this->l('Filtros y Exenciones'),
                 ],
                 'input' => [
                     // ---- VISIBILIDAD ----
@@ -515,9 +652,17 @@ class Josradesistimiento extends Module
                         'lang'  => true,
                         'rows'  => 8,
                         'desc'  => $this->l(
-                            'Formato: clave|Etiqueta visible para el cliente. Mantén la línea "otro|..." para conservar la opción "Otro motivo". ' .
-                            'Totalmente traducible: cada idioma tiene su propia lista.'
+                            'Formato: clave|Etiqueta visible para el cliente (ej: defecto|El producto llegó con defecto). ' .
+                            'No incluyas aquí "Otro motivo": tiene su propio campo justo abajo. Totalmente traducible: cada idioma tiene su propia lista.'
                         ),
+                    ],
+                    [
+                        'type'  => 'text',
+                        'label' => $this->l('Etiqueta de "Otro motivo"'),
+                        'name'  => 'JOSRA_DESIST_MOTIVO_OTRO_LABEL',
+                        'tab'   => 'motivos',
+                        'lang'  => true,
+                        'desc'  => $this->l('Siempre se muestra como última opción del desplegable. Solo puedes cambiar el texto, no eliminarla.'),
                     ],
                     [
                         'type'   => 'switch',
@@ -598,6 +743,51 @@ class Josradesistimiento extends Module
                         'tab'   => 'notif',
                         'desc'  => $this->l('Email al que llegarán las respuestas del cliente. Dejar en blanco para no añadir reply-to.'),
                     ],
+                    // ---- FILTROS Y EXENCIONES ----
+                    [
+                        'type'    => 'checkbox',
+                        'label'   => $this->l('Transportistas excluidos del desistimiento'),
+                        'name'    => 'JOSRA_DESIST_CARRIERS_EXCLUIDOS',
+                        'tab'     => 'filtros',
+                        'values'  => [
+                            'query' => $carriersQuery,
+                            'id'    => 'id_carrier',
+                            'name'  => 'name',
+                        ],
+                        'desc'    => $this->l('Los pedidos enviados con estos transportistas no podrán desistir (ej: recogida en tienda).'),
+                    ],
+                    [
+                        'type'    => 'checkbox',
+                        'label'   => $this->l('Estados de pedido excluidos del desistimiento'),
+                        'name'    => 'JOSRA_DESIST_ESTADOS_EXCLUIDOS',
+                        'tab'     => 'filtros',
+                        'values'  => [
+                            'query' => $orderStatesQuery,
+                            'id'    => 'id_order_state',
+                            'name'  => 'name',
+                        ],
+                        'desc'    => $this->l('Pedidos en estos estados no podrán solicitar el desistimiento.'),
+                    ],
+                    [
+                        'type'    => 'checkbox',
+                        'label'   => $this->l('Grupos de cliente B2B excluidos'),
+                        'name'    => 'JOSRA_DESIST_GRUPOS_B2B_EXCLUIDOS',
+                        'tab'     => 'filtros',
+                        'values'  => [
+                            'query' => $groupsQuery,
+                            'id'    => 'id_group',
+                            'name'  => 'name',
+                        ],
+                        'desc'    => $this->l('Los clientes profesionales (B2B) no tienen derecho de desistimiento como consumidores.'),
+                    ],
+                    [
+                        'type'   => 'switch',
+                        'label'  => $this->l('Excluir pedidos a nombre de una empresa'),
+                        'name'   => 'JOSRA_DESIST_EXCLUIR_SI_EMPRESA',
+                        'tab'    => 'filtros',
+                        'values' => $sw,
+                        'desc'   => $this->l('Si la dirección de facturación del pedido tiene el campo "Empresa" relleno, se considera B2B y se excluye.'),
+                    ],
                 ],
                 'submit' => [
                     'title' => $this->l('Guardar configuración'),
@@ -620,19 +810,46 @@ class Josradesistimiento extends Module
             $html .= '<p class="alert alert-info">' . $this->l('No hay solicitudes todavía.') . '</p>';
         } else {
             $badges = [
-                'pendiente' => '<span class="label label-warning">Pendiente</span>',
-                'procesado' => '<span class="label label-success">Procesado</span>',
-                'rechazado' => '<span class="label label-danger">Rechazado</span>',
-                'retenido'  => '<span class="label label-info">Retenido</span>',
+                'pendiente'   => '<span class="label label-warning">Pendiente</span>',
+                'aprobado'    => '<span class="label label-info">Aprobado</span>',
+                'procesado'   => '<span class="label label-success">Procesado</span>',
+                'completado'  => '<span class="label label-success">Completado</span>',
+                'rechazado'   => '<span class="label label-danger">Rechazado</span>',
+                'retenido'    => '<span class="label label-info">Retenido</span>',
+                'expirado'    => '<span class="label label-default">Expirado</span>',
             ];
+            $tokenAdmin = Tools::getAdminTokenLite('AdminModules');
+            $currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name;
+
             $html .= '<table class="table tableDnD"><thead><tr>
                 <th>ID</th><th>Referencia</th><th>Cliente</th><th>Email</th>
-                <th>Motivo</th><th>Estado</th><th>Retención</th><th>Fecha</th>
+                <th>Motivo</th><th>Estado</th><th>Retención</th><th>Fecha</th><th>' . $this->l('Acciones') . '</th>
             </tr></thead><tbody>';
             foreach ($rows as $r) {
                 $badge = isset($badges[$r['estado']]) ? $badges[$r['estado']] : $r['estado'];
+                $idDes = (int) $r['id_desistimiento'];
+                $accionesForm = '
+                    <form method="post" action="' . $currentIndex . '&token=' . $tokenAdmin . '" style="display:inline-block;">
+                        <input type="hidden" name="id_desistimiento" value="' . $idDes . '">
+                        <select name="josra_accion" onchange="if(this.value){this.form.submit();}" class="form-control input-sm" style="display:inline-block;width:auto;">
+                            <option value="">' . $this->l('Acción...') . '</option>
+                            <option value="aprobar">' . $this->l('Aprobar') . '</option>
+                            <option value="rechazar">' . $this->l('Rechazar') . '</option>
+                            <option value="marcar_recibido">' . $this->l('Marcar recibido') . '</option>
+                            <option value="marcar_reembolsado">' . $this->l('Marcar reembolsado') . '</option>
+                        </select>
+                    </form>
+                    <a href="#josra-nota-' . $idDes . '" data-toggle="collapse" class="btn btn-default btn-xs">' . $this->l('Nota') . '</a>
+                    <div id="josra-nota-' . $idDes . '" class="collapse">
+                        <form method="post" action="' . $currentIndex . '&token=' . $tokenAdmin . '" style="margin-top:5px;">
+                            <input type="hidden" name="id_desistimiento" value="' . $idDes . '">
+                            <input type="hidden" name="josra_accion" value="nota">
+                            <input type="text" name="josra_nota" class="form-control input-sm" placeholder="' . $this->l('Nota interna...') . '" style="display:inline-block;width:200px;">
+                            <button type="submit" class="btn btn-default btn-xs">' . $this->l('Guardar') . '</button>
+                        </form>
+                    </div>';
                 $html .= '<tr>
-                    <td>' . (int)$r['id_desistimiento'] . '</td>
+                    <td>' . $idDes . '</td>
                     <td><strong>' . htmlspecialchars($r['reference']) . '</strong></td>
                     <td>' . htmlspecialchars($r['nombre']) . '</td>
                     <td>' . htmlspecialchars($r['email']) . '</td>
@@ -640,12 +857,309 @@ class Josradesistimiento extends Module
                     <td>' . $badge . '</td>
                     <td>' . htmlspecialchars($r['opcion_retencion']) . '</td>
                     <td>' . htmlspecialchars($r['fecha_solicitud']) . '</td>
+                    <td>' . $accionesForm . '</td>
                 </tr>';
             }
             $html .= '</tbody></table>';
         }
         $html .= '</div>';
         return $html;
+    }
+
+    /* =========================================================
+     *  KPIs
+     * ========================================================= */
+
+    private function renderKpiPanel()
+    {
+        $tabla = _DB_PREFIX_ . 'josra_desistimiento';
+
+        $pendientes = (int) Db::getInstance()->getValue(
+            'SELECT COUNT(*) FROM `' . $tabla . '` WHERE `estado` = \'pendiente\''
+        );
+
+        $venceEn3Dias = (int) Db::getInstance()->getValue(
+            'SELECT COUNT(*) FROM `' . $tabla . '`
+             WHERE `estado` = \'pendiente\'
+             AND `fecha_limite` IS NOT NULL
+             AND `fecha_limite` BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 3 DAY)'
+        );
+
+        $resueltasMes = (int) Db::getInstance()->getValue(
+            'SELECT COUNT(*) FROM `' . $tabla . '`
+             WHERE `estado` IN (\'procesado\', \'completado\', \'rechazado\')
+             AND MONTH(`fecha_procesado`) = MONTH(CURDATE())
+             AND YEAR(`fecha_procesado`) = YEAR(CURDATE())'
+        );
+
+        $total = (int) Db::getInstance()->getValue(
+            'SELECT COUNT(*) FROM `' . $tabla . '`'
+        );
+
+        $kpis = [
+            ['label' => $this->l('Pendientes'),              'valor' => $pendientes,   'color' => '#f39c12'],
+            ['label' => $this->l('Vencen en 3 días'),         'valor' => $venceEn3Dias, 'color' => '#e74c3c'],
+            ['label' => $this->l('Resueltas este mes'),       'valor' => $resueltasMes, 'color' => '#27ae60'],
+            ['label' => $this->l('Total de solicitudes'),     'valor' => $total,        'color' => '#2980b9'],
+        ];
+
+        $html = '<div class="panel"><div class="panel-heading"><i class="icon-dashboard"></i> '
+            . $this->l('Indicadores') . '</div><div class="panel-body">
+            <div class="row">';
+        foreach ($kpis as $kpi) {
+            $html .= '
+                <div class="col-lg-3 col-md-6">
+                    <div style="border-left:4px solid ' . $kpi['color'] . ';padding:10px 15px;margin-bottom:15px;background:#fafafa;">
+                        <div style="font-size:26px;font-weight:700;color:' . $kpi['color'] . ';">' . $kpi['valor'] . '</div>
+                        <div style="font-size:12px;color:#7f8c8d;text-transform:uppercase;">' . $kpi['label'] . '</div>
+                    </div>
+                </div>';
+        }
+        $html .= '</div></div></div>';
+        return $html;
+    }
+
+    /* =========================================================
+     *  CRON
+     * ========================================================= */
+
+    private function renderCronPanel()
+    {
+        $token = Configuration::get('JOSRA_DESIST_CRON_TOKEN');
+        $url = Tools::getShopDomainSsl(true) . __PS_BASE_URI__ . 'module/' . $this->name . '/cron?token=' . $token;
+        $currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name;
+        $tokenAdmin = Tools::getAdminTokenLite('AdminModules');
+
+        $html = '<div class="panel"><div class="panel-heading"><i class="icon-time"></i> '
+            . $this->l('Tarea programada (cron)') . '</div><div class="panel-body">
+            <p>' . $this->l('Configura tu planificador de tareas (cron del servidor o servicio externo) para llamar a esta URL una vez al día. Expira las solicitudes vencidas y envía recordatorios antes del plazo límite.') . '</p>
+            <div class="form-group">
+                <label>' . $this->l('URL de la tarea cron') . '</label>
+                <input type="text" class="form-control" readonly value="' . htmlspecialchars($url) . '" onclick="this.select();">
+            </div>
+            <form method="post" action="' . $currentIndex . '&token=' . $tokenAdmin . '">
+                <button type="submit" name="submit_josra_regenerar_token" class="btn btn-default">
+                    ' . $this->l('Regenerar token') . '
+                </button>
+                <span class="help-block" style="display:inline-block;margin-left:10px;">'
+                    . $this->l('Si regeneras el token, deberás actualizar la URL en tu planificador.') . '</span>
+            </form>
+        </div></div>';
+        return $html;
+    }
+
+    /* =========================================================
+     *  FILTROS Y EXENCIONES — panel admin
+     * ========================================================= */
+
+    private function renderExclusionesPanel()
+    {
+        $currentIndex = $this->context->link->getAdminLink('AdminModules', false) . '&configure=' . $this->name;
+        $tokenAdmin = Tools::getAdminTokenLite('AdminModules');
+
+        $rows = Db::getInstance()->executeS(
+            'SELECT * FROM `' . _DB_PREFIX_ . 'josra_desistimiento_exclusion` ORDER BY `date_add` DESC'
+        );
+
+        $tipoLabels = [
+            'producto'   => $this->l('Producto'),
+            'categoria'  => $this->l('Categoría'),
+            'fabricante' => $this->l('Fabricante'),
+            'proveedor'  => $this->l('Proveedor'),
+        ];
+        $modoLabels = [
+            'excluir' => $this->l('Excluir del desistimiento'),
+            'ampliar' => $this->l('Ampliar plazo'),
+        ];
+
+        $html = '<div class="panel"><div class="panel-heading"><i class="icon-ban"></i> '
+            . $this->l('Filtros y Exenciones por producto / categoría / fabricante / proveedor') . '</div>
+            <div class="panel-body">
+            <p>' . $this->l('Añade reglas para excluir del derecho de desistimiento (ej. productos personalizados, perecederos) o para ampliar el plazo para determinados artículos.') . '</p>
+
+            <form method="post" action="' . $currentIndex . '&token=' . $tokenAdmin . '" class="form-inline" style="margin-bottom:15px;">
+                <div class="form-group">
+                    <label>' . $this->l('Tipo') . '</label>
+                    <select name="josra_exclusion_tipo" class="form-control">
+                        <option value="producto">' . $this->l('Producto') . '</option>
+                        <option value="categoria">' . $this->l('Categoría') . '</option>
+                        <option value="fabricante">' . $this->l('Fabricante') . '</option>
+                        <option value="proveedor">' . $this->l('Proveedor') . '</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>' . $this->l('ID del objeto') . '</label>
+                    <input type="number" name="josra_exclusion_id_objeto" class="form-control" min="1" required>
+                </div>
+                <div class="form-group">
+                    <label>' . $this->l('Modo') . '</label>
+                    <select name="josra_exclusion_modo" class="form-control">
+                        <option value="excluir">' . $this->l('Excluir del desistimiento') . '</option>
+                        <option value="ampliar">' . $this->l('Ampliar plazo') . '</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>' . $this->l('Días ampliados') . '</label>
+                    <input type="number" name="josra_exclusion_dias_ampliados" class="form-control" min="1" placeholder="' . $this->l('Solo si modo = ampliar') . '">
+                </div>
+                <button type="submit" name="submit_josra_exclusion_add" class="btn btn-default">
+                    <i class="icon-plus"></i> ' . $this->l('Añadir regla') . '
+                </button>
+            </form>';
+
+        if (empty($rows)) {
+            $html .= '<p class="alert alert-info">' . $this->l('No hay reglas de exclusión configuradas.') . '</p>';
+        } else {
+            $html .= '<table class="table"><thead><tr>
+                <th>ID</th><th>' . $this->l('Tipo') . '</th><th>' . $this->l('ID objeto') . '</th>
+                <th>' . $this->l('Modo') . '</th><th>' . $this->l('Días ampliados') . '</th>
+                <th>' . $this->l('Creado') . '</th><th></th>
+            </tr></thead><tbody>';
+            foreach ($rows as $r) {
+                $idExclusion = (int) $r['id_exclusion'];
+                $html .= '<tr>
+                    <td>' . $idExclusion . '</td>
+                    <td>' . (isset($tipoLabels[$r['tipo']]) ? $tipoLabels[$r['tipo']] : htmlspecialchars($r['tipo'])) . '</td>
+                    <td>' . (int) $r['id_objeto'] . '</td>
+                    <td>' . (isset($modoLabels[$r['modo']]) ? $modoLabels[$r['modo']] : htmlspecialchars($r['modo'])) . '</td>
+                    <td>' . ($r['dias_ampliados'] !== null ? (int) $r['dias_ampliados'] : '—') . '</td>
+                    <td>' . htmlspecialchars($r['date_add']) . '</td>
+                    <td>
+                        <form method="post" action="' . $currentIndex . '&token=' . $tokenAdmin . '" onsubmit="return confirm(\'' . $this->l('¿Eliminar esta regla?') . '\');" style="display:inline;">
+                            <input type="hidden" name="josra_exclusion_delete" value="' . $idExclusion . '">
+                            <button type="submit" class="btn btn-danger btn-xs"><i class="icon-trash"></i></button>
+                        </form>
+                    </td>
+                </tr>';
+            }
+            $html .= '</tbody></table>';
+        }
+
+        $html .= '</div></div>';
+        return $html;
+    }
+
+    private function postProcessExclusionAdd()
+    {
+        $tipo = Tools::getValue('josra_exclusion_tipo', 'producto');
+        if (!in_array($tipo, ['producto', 'categoria', 'fabricante', 'proveedor'], true)) {
+            $tipo = 'producto';
+        }
+        $idObjeto = (int) Tools::getValue('josra_exclusion_id_objeto');
+        $modo = Tools::getValue('josra_exclusion_modo', 'excluir');
+        if (!in_array($modo, ['excluir', 'ampliar'], true)) {
+            $modo = 'excluir';
+        }
+        $diasAmpliados = Tools::getValue('josra_exclusion_dias_ampliados', '');
+        $diasAmpliados = ($modo === 'ampliar' && $diasAmpliados !== '') ? (int) $diasAmpliados : null;
+
+        if ($idObjeto <= 0) {
+            return $this->displayError($this->l('Debes indicar un ID de objeto válido.'));
+        }
+
+        $ok = Db::getInstance()->insert('josra_desistimiento_exclusion', [
+            'tipo'           => pSQL($tipo),
+            'id_objeto'      => $idObjeto,
+            'modo'           => pSQL($modo),
+            'dias_ampliados' => $diasAmpliados,
+            'date_add'       => date('Y-m-d H:i:s'),
+        ]);
+
+        return $ok
+            ? $this->displayConfirmation($this->l('Regla de exclusión añadida correctamente.'))
+            : $this->displayError($this->l('No se pudo guardar la regla de exclusión.'));
+    }
+
+    private function postProcessExclusionDelete()
+    {
+        $idExclusion = (int) Tools::getValue('josra_exclusion_delete');
+        if ($idExclusion <= 0) {
+            return $this->displayError($this->l('Regla no válida.'));
+        }
+
+        $ok = Db::getInstance()->delete('josra_desistimiento_exclusion', 'id_exclusion = ' . $idExclusion);
+
+        return $ok
+            ? $this->displayConfirmation($this->l('Regla de exclusión eliminada.'))
+            : $this->displayError($this->l('No se pudo eliminar la regla.'));
+    }
+
+    /* =========================================================
+     *  GESTIÓN DE SOLICITUDES — acciones de backoffice
+     * ========================================================= */
+
+    private function postProcessAccionSolicitud()
+    {
+        $idDesistimiento = (int) Tools::getValue('id_desistimiento');
+        $accion = Tools::getValue('josra_accion');
+
+        if ($idDesistimiento <= 0) {
+            return $this->displayError($this->l('Solicitud no válida.'));
+        }
+
+        $solicitud = Db::getInstance()->getRow(
+            'SELECT * FROM `' . _DB_PREFIX_ . 'josra_desistimiento` WHERE `id_desistimiento` = ' . $idDesistimiento
+        );
+        if (!$solicitud) {
+            return $this->displayError($this->l('Solicitud no encontrada.'));
+        }
+
+        $ahora = date('Y-m-d H:i:s');
+
+        switch ($accion) {
+            case 'aprobar':
+                Db::getInstance()->update('josra_desistimiento', [
+                    'estado'         => 'aprobado',
+                    'fecha_aprobado' => $ahora,
+                ], 'id_desistimiento = ' . $idDesistimiento);
+                $this->addAuditoria($idDesistimiento, $this->l('Solicitud aprobada por el administrador.'));
+                return $this->displayConfirmation($this->l('Solicitud aprobada correctamente.'));
+
+            case 'rechazar':
+                $motivoRechazo = pSQL(Tools::getValue('josra_motivo_rechazo', ''), true);
+                Db::getInstance()->update('josra_desistimiento', [
+                    'estado'         => 'rechazado',
+                    'fecha_rechazado' => $ahora,
+                    'fecha_procesado' => $ahora,
+                    'motivo_rechazo' => $motivoRechazo,
+                ], 'id_desistimiento = ' . $idDesistimiento);
+                $this->addAuditoria($idDesistimiento, $this->l('Solicitud rechazada.') . ($motivoRechazo ? ' ' . $this->l('Motivo:') . ' ' . $motivoRechazo : ''));
+                return $this->displayConfirmation($this->l('Solicitud rechazada.'));
+
+            case 'marcar_recibido':
+                Db::getInstance()->update('josra_desistimiento', [
+                    'bienes_recibidos' => 1,
+                    'fecha_recibido'   => $ahora,
+                ], 'id_desistimiento = ' . $idDesistimiento);
+                $this->addAuditoria($idDesistimiento, $this->l('Bienes recibidos marcados como recibidos por el comercio.'));
+                return $this->displayConfirmation($this->l('Marcado como recibido.'));
+
+            case 'marcar_reembolsado':
+                Db::getInstance()->update('josra_desistimiento', [
+                    'estado'            => 'completado',
+                    'reembolsado'       => 1,
+                    'fecha_reembolsado' => $ahora,
+                    'fecha_procesado'   => $ahora,
+                ], 'id_desistimiento = ' . $idDesistimiento);
+                $this->addAuditoria($idDesistimiento, $this->l('Reembolso marcado manualmente. Solicitud completada.'));
+                return $this->displayConfirmation($this->l('Marcado como reembolsado.'));
+
+            case 'nota':
+                $nota = pSQL(Tools::getValue('josra_nota', ''), true);
+                if ($nota !== '') {
+                    $linea = '[' . date('d/m/Y H:i:s') . '] ' . $nota;
+                    Db::getInstance()->execute(
+                        'UPDATE `' . _DB_PREFIX_ . 'josra_desistimiento`
+                         SET `notas_internas` = TRIM(CONCAT(IFNULL(`notas_internas`, \'\'), \'\n\', \'' . pSQL($linea) . '\'))
+                         WHERE `id_desistimiento` = ' . $idDesistimiento
+                    );
+                    $this->addAuditoria($idDesistimiento, $this->l('Nota interna añadida.'));
+                }
+                return $this->displayConfirmation($this->l('Nota guardada.'));
+
+            default:
+                return $this->displayError($this->l('Acción no reconocida.'));
+        }
     }
 
     /* =========================================================
@@ -687,6 +1201,47 @@ class Josradesistimiento extends Module
         if (!Configuration::get('JOSRA_DESIST_ACCOUNT')) return '';
         $order = isset($params['order']) ? $params['order'] : null;
         return $this->renderBoton('pedido', $order);
+    }
+
+    /**
+     * Completa automáticamente la solicitud cuando el pedido pasa a un estado
+     * de "reembolsado" (detectado por nombre, igual que getEstadosExcluidos()
+     * en el controlador front). Evita tener que cerrar manualmente la solicitud
+     * cuando el reembolso ya se ha hecho desde el pedido.
+     */
+    public function hookActionOrderStatusPostUpdate($params)
+    {
+        $newOrderStatus = isset($params['newOrderStatus']) ? $params['newOrderStatus'] : null;
+        $idOrder = isset($params['id_order']) ? (int) $params['id_order'] : 0;
+        if (!$idOrder || !$newOrderStatus || !Validate::isLoadedObject($newOrderStatus)) {
+            return;
+        }
+
+        $nombreEstado = Tools::strtolower($newOrderStatus->name[(int) Configuration::get('PS_LANG_DEFAULT')] ?? '');
+        $esReembolso = (strpos($nombreEstado, 'reembols') !== false) || (strpos($nombreEstado, 'refund') !== false);
+        if (!$esReembolso) {
+            return;
+        }
+
+        $solicitud = Db::getInstance()->getRow(
+            'SELECT `id_desistimiento` FROM `' . _DB_PREFIX_ . 'josra_desistimiento`
+             WHERE `id_order` = ' . $idOrder . '
+             AND `estado` NOT IN (\'rechazado\', \'completado\', \'expirado\')
+             ORDER BY `fecha_solicitud` DESC'
+        );
+
+        if (!$solicitud) {
+            return;
+        }
+
+        Db::getInstance()->update('josra_desistimiento', [
+            'estado'            => 'completado',
+            'reembolsado'       => 1,
+            'fecha_reembolsado' => date('Y-m-d H:i:s'),
+            'fecha_procesado'   => date('Y-m-d H:i:s'),
+        ], 'id_desistimiento = ' . (int) $solicitud['id_desistimiento']);
+
+        $this->addAuditoria((int) $solicitud['id_desistimiento'], $this->l('Pedido marcado como reembolsado en PrestaShop. Solicitud completada automáticamente.'));
     }
 
     /* =========================================================
@@ -901,5 +1456,186 @@ class Josradesistimiento extends Module
         $history->add();
 
         return true;
+    }
+
+    /* =========================================================
+     *  AUDITORÍA
+     * ========================================================= */
+
+    public function addAuditoria($idDesistimiento, $texto)
+    {
+        $linea = '[' . date('d/m/Y H:i:s') . '] ' . $texto;
+        Db::getInstance()->execute(
+            'UPDATE `' . _DB_PREFIX_ . 'josra_desistimiento`
+             SET `auditoria` = TRIM(CONCAT(IFNULL(`auditoria`, \'\'), \'\n\', \'' . pSQL($linea) . '\'))
+             WHERE `id_desistimiento` = ' . (int) $idDesistimiento
+        );
+    }
+
+    /* =========================================================
+     *  ACUSE DE RECIBO EN PDF
+     * ========================================================= */
+
+    /**
+     * Genera el PDF de acuse de recibo de una solicitud de desistimiento.
+     * Requiere TCPDF (incluido de serie en PrestaShop). Si no está disponible,
+     * devuelve null y el email se envía sin adjunto (no es un error fatal).
+     */
+    public function generarPdfAcuseRecibo($idDesistimiento)
+    {
+        if (!class_exists('TCPDF')) {
+            return null;
+        }
+
+        $solicitud = Db::getInstance()->getRow(
+            'SELECT * FROM `' . _DB_PREFIX_ . 'josra_desistimiento` WHERE `id_desistimiento` = ' . (int) $idDesistimiento
+        );
+        if (!$solicitud) {
+            return null;
+        }
+
+        $motivos = $this->getMotivos((int) $this->context->language->id);
+        $motivoLabel = isset($motivos[$solicitud['motivo']]) ? $motivos[$solicitud['motivo']] : $solicitud['motivo'];
+
+        $pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false);
+        $pdf->SetCreator('PrestaShop');
+        $pdf->SetTitle($this->l('Acuse de recibo de desistimiento') . ' #JOSRA-' . (int) $idDesistimiento);
+        $pdf->SetMargins(15, 15, 15);
+        $pdf->SetAutoPageBreak(true, 15);
+        $pdf->AddPage();
+
+        $shopName = Configuration::get('PS_SHOP_NAME');
+
+        $html = '<h2>' . $this->l('Acuse de recibo de solicitud de desistimiento') . '</h2>'
+            . '<p>' . $shopName . '</p>'
+            . '<hr>'
+            . '<p><strong>' . $this->l('Número de solicitud') . ':</strong> #JOSRA-' . (int) $idDesistimiento . '</p>'
+            . '<p><strong>' . $this->l('Referencia del pedido') . ':</strong> ' . htmlspecialchars($solicitud['reference']) . '</p>'
+            . '<p><strong>' . $this->l('Cliente') . ':</strong> ' . htmlspecialchars($solicitud['nombre']) . ' (' . htmlspecialchars($solicitud['email']) . ')</p>'
+            . '<p><strong>' . $this->l('Motivo') . ':</strong> ' . htmlspecialchars($motivoLabel) . '</p>'
+            . '<p><strong>' . $this->l('Fecha de la solicitud') . ':</strong> ' . htmlspecialchars($solicitud['fecha_solicitud']) . '</p>'
+            . '<p>' . $this->l('Hemos recibido tu solicitud de desistimiento de acuerdo con la Directiva (UE) 2023/2673. Este documento sirve como acuse de recibo inmediato.') . '</p>';
+
+        $pdf->writeHTML($html, true, false, true, false, '');
+
+        return $pdf->Output('acuse_desistimiento_' . (int) $idDesistimiento . '.pdf', 'S');
+    }
+
+    /* =========================================================
+     *  FILTROS Y EXENCIONES (productos, categorías, fabricantes,
+     *  proveedores, transportistas, estados de pedido, B2B)
+     * ========================================================= */
+
+    /**
+     * Calcula el plazo de desistimiento (en días) aplicable a un pedido,
+     * según las exenciones configuradas para sus productos. Si CUALQUIER
+     * producto del pedido tiene una regla de "ampliar", se usa el plazo
+     * más alto. Devuelve null si TODOS los productos del pedido están
+     * excluidos del derecho de desistimiento (art. 16 Directiva 2011/83/UE).
+     */
+    public function getDiasParaPedido(Order $order)
+    {
+        $diasBase = (int) Configuration::get('JOSRA_DESIST_DIAS') ?: 14;
+        $productos = $order->getProducts();
+
+        if (empty($productos)) {
+            return $diasBase;
+        }
+
+        $reglas = $this->getReglasExclusion();
+        if (empty($reglas)) {
+            return $diasBase;
+        }
+
+        $diasMax = null;
+        $totalProductos = count($productos);
+        $excluidos = 0;
+
+        foreach ($productos as $producto) {
+            $regla = $this->buscarReglaProducto($producto, $reglas);
+            if ($regla === null) {
+                $diasMax = max($diasMax === null ? $diasBase : $diasMax, $diasBase);
+                continue;
+            }
+            if ($regla['modo'] === 'excluir') {
+                $excluidos++;
+                continue;
+            }
+            $dias = (int) $regla['dias_ampliados'] ?: $diasBase;
+            $diasMax = max($diasMax === null ? $dias : $diasMax, $dias, $diasBase);
+        }
+
+        if ($excluidos >= $totalProductos) {
+            return null; // todo el pedido está excluido del derecho de desistimiento
+        }
+
+        return $diasMax !== null ? $diasMax : $diasBase;
+    }
+
+    private function getReglasExclusion()
+    {
+        return Db::getInstance()->executeS(
+            'SELECT * FROM `' . _DB_PREFIX_ . 'josra_desistimiento_exclusion`'
+        );
+    }
+
+    private function buscarReglaProducto(array $producto, array $reglas)
+    {
+        $idProduct = (int) $producto['product_id'];
+        $idCategoria = isset($producto['id_category_default']) ? (int) $producto['id_category_default'] : 0;
+        $idFabricante = isset($producto['id_manufacturer']) ? (int) $producto['id_manufacturer'] : 0;
+        $idProveedor = isset($producto['id_supplier']) ? (int) $producto['id_supplier'] : 0;
+
+        // Prioridad: producto > categoría > fabricante > proveedor
+        foreach (['producto' => $idProduct, 'categoria' => $idCategoria, 'fabricante' => $idFabricante, 'proveedor' => $idProveedor] as $tipo => $idObjeto) {
+            if (!$idObjeto) {
+                continue;
+            }
+            foreach ($reglas as $regla) {
+                if ($regla['tipo'] === $tipo && (int) $regla['id_objeto'] === $idObjeto) {
+                    return $regla;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Determina si un pedido es elegible para desistimiento según los filtros
+     * de transportista, estado de pedido y exclusión B2B configurados.
+     * Devuelve un array ['elegible' => bool, 'motivo' => string|null].
+     */
+    public function esPedidoElegible(Order $order)
+    {
+        // Transportista excluido
+        $carriersExcluidos = array_filter(array_map('intval', explode(',', (string) Configuration::get('JOSRA_DESIST_CARRIERS_EXCLUIDOS'))));
+        if ($carriersExcluidos && in_array((int) $order->id_carrier, $carriersExcluidos, true)) {
+            return ['elegible' => false, 'motivo' => $this->l('Transportista no elegible para desistimiento.')];
+        }
+
+        // Estado de pedido excluido (configurado manualmente)
+        $estadosExcluidos = array_filter(array_map('intval', explode(',', (string) Configuration::get('JOSRA_DESIST_ESTADOS_EXCLUIDOS'))));
+        if ($estadosExcluidos && in_array((int) $order->current_state, $estadosExcluidos, true)) {
+            return ['elegible' => false, 'motivo' => $this->l('El estado actual del pedido no permite el desistimiento.')];
+        }
+
+        // Exclusión B2B por grupo de cliente
+        $gruposExcluidos = array_filter(array_map('intval', explode(',', (string) Configuration::get('JOSRA_DESIST_GRUPOS_B2B_EXCLUIDOS'))));
+        if ($gruposExcluidos) {
+            $customer = new Customer((int) $order->id_customer);
+            if (Validate::isLoadedObject($customer) && in_array((int) $customer->id_default_group, $gruposExcluidos, true)) {
+                return ['elegible' => false, 'motivo' => $this->l('Los clientes profesionales (B2B) no tienen derecho de desistimiento.')];
+            }
+        }
+
+        // Exclusión B2B por empresa indicada en la dirección de facturación del pedido
+        if (Configuration::get('JOSRA_DESIST_EXCLUIR_SI_EMPRESA') && $order->id_address_invoice) {
+            $address = new Address((int) $order->id_address_invoice);
+            if (Validate::isLoadedObject($address) && !empty($address->company)) {
+                return ['elegible' => false, 'motivo' => $this->l('Pedido a nombre de una empresa: excluido del derecho de desistimiento del consumidor.')];
+            }
+        }
+
+        return ['elegible' => true, 'motivo' => null];
     }
 }

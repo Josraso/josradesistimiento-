@@ -1,0 +1,14 @@
+Recordatorio: tu solicitud de desistimiento está pendiente — {shop_name}
+
+Hola {nombre},
+
+Te recordamos que tu solicitud de desistimiento para el pedido {referencia} sigue pendiente de completarse.
+
+Número de solicitud: #JOSRA-{id_desistimiento}
+Pedido: {referencia}
+Fecha límite estimada: {fecha_limite}
+
+Si ya has enviado los productos de vuelta, ignora este mensaje; nuestro equipo procesará tu solicitud en breve.
+Si tienes dudas, puedes responder a este email.
+
+{shop_name}

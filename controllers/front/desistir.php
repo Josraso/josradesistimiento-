@@ -137,11 +137,20 @@ class JosradesistimientoDesistirModuleFrontController extends ModuleFrontControl
             if (!$order) {
                 $errores[] = $this->module->l('No encontramos ningún pedido con esa referencia.');
             } else {
-                $dias = (int) Configuration::get('JOSRA_DESIST_DIAS') ?: 14;
-                if (!$this->estaEnPlazo($order, $dias)) {
-                    $errores[] = $this->module->l(
-                        'El plazo de desistimiento de ' . $dias . ' días desde la entrega ha expirado para este pedido.'
-                    );
+                // Filtros y exenciones: transportista, estado de pedido, B2B
+                $elegibilidad = $this->module->esPedidoElegible($order);
+                if (!$elegibilidad['elegible']) {
+                    $errores[] = $elegibilidad['motivo'];
+                } else {
+                    // Plazo: usa el plazo por producto (exclusiones/ampliaciones), null = sin derecho
+                    $dias = $this->module->getDiasParaPedido($order);
+                    if ($dias === null) {
+                        $errores[] = $this->module->l('Los productos de este pedido no tienen derecho de desistimiento.');
+                    } elseif (!$this->estaEnPlazo($order, $dias)) {
+                        $errores[] = $this->module->l(
+                            'El plazo de desistimiento de ' . $dias . ' días desde la entrega ha expirado para este pedido.'
+                        );
+                    }
                 }
                 // Verificar que el email coincide con el del pedido
                 $customerEmail = (new Customer($order->id_customer))->email;
@@ -167,6 +176,11 @@ class JosradesistimientoDesistirModuleFrontController extends ModuleFrontControl
         $idOrder    = $order ? (int) $order->id : 0;
         $idCustomer = $order ? (int) $order->id_customer : 0;
 
+        // Plazo (SLA) para completar la gestión de la solicitud (recepción + reembolso):
+        // 14 días naturales desde que se registra la solicitud, usado por la tarea cron
+        // para expirar solicitudes olvidadas y enviar recordatorios.
+        $fechaLimite = date('Y-m-d H:i:s', strtotime('+14 days'));
+
         Db::getInstance()->insert('josra_desistimiento', [
             'id_order'        => $idOrder,
             'id_customer'     => $idCustomer,
@@ -178,6 +192,7 @@ class JosradesistimientoDesistirModuleFrontController extends ModuleFrontControl
             'estado'          => 'pendiente',
             'ip'              => pSQL(Tools::getRemoteAddr()),
             'fecha_solicitud' => date('Y-m-d H:i:s'),
+            'fecha_limite'    => $fechaLimite,
             'token'           => $token,
         ]);
 
@@ -302,11 +317,23 @@ class JosradesistimientoDesistirModuleFrontController extends ModuleFrontControl
             return [];
         }
 
-        // Filtrar en PHP los que han superado el plazo desde la entrega
+        // Filtrar en PHP los que han superado el plazo desde la entrega,
+        // o que no son elegibles por filtros/exenciones configurados
         $resultado = [];
         foreach ($pedidos as $p) {
             $order = new Order((int) $p['id_order']);
-            if ($this->estaEnPlazo($order, $dias)) {
+
+            $elegibilidad = $this->module->esPedidoElegible($order);
+            if (!$elegibilidad['elegible']) {
+                continue;
+            }
+
+            $diasPedido = $this->module->getDiasParaPedido($order);
+            if ($diasPedido === null) {
+                continue;
+            }
+
+            if ($this->estaEnPlazo($order, $diasPedido)) {
                 $resultado[] = $p;
             }
         }
@@ -429,6 +456,17 @@ class JosradesistimientoDesistirModuleFrontController extends ModuleFrontControl
         $fromName  = $fromEmail ? $shopName : null;
         $replyToEmail = ($replyTo && Validate::isEmail($replyTo)) ? $replyTo : null;
 
+        // Acuse de recibo en PDF (opcional, requiere TCPDF disponible)
+        $fileAttachment = null;
+        $pdfContenido = $this->module->generarPdfAcuseRecibo($idDesistimiento);
+        if ($pdfContenido !== null) {
+            $fileAttachment = [
+                'content' => $pdfContenido,
+                'name'    => 'acuse_desistimiento_' . (int) $idDesistimiento . '.pdf',
+                'mime'    => 'application/pdf',
+            ];
+        }
+
         Mail::Send(
             $idLang,
             'desistimiento_confirmacion',
@@ -438,7 +476,7 @@ class JosradesistimientoDesistirModuleFrontController extends ModuleFrontControl
             $nombre,
             $fromEmail,
             $fromName,
-            null,
+            $fileAttachment,
             null,
             _PS_MODULE_DIR_ . $this->module->name . '/mails/',
             false,
