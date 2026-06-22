@@ -1,6 +1,6 @@
 <?php
 /**
- * Módulo: josradesistimiento v1.2.0
+ * Módulo: josradesistimiento v1.3.0
  * Directiva (UE) 2023/2673 — Compatible PrestaShop 1.7, 8.x, 9.x
  *
  * v1.1.0:
@@ -211,7 +211,7 @@ class Josradesistimiento extends Module
         Configuration::updateValue('JOSRA_DESIST_EMAIL_REPLYTO', '');
         Configuration::updateValue('JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO', 0);
 
-        // ---- Filtros y exenciones (v1.2.1) ----
+        // ---- Filtros y exenciones (v1.3.0) ----
         Configuration::updateValue('JOSRA_DESIST_CARRIERS_EXCLUIDOS', '');
         Configuration::updateValue('JOSRA_DESIST_ESTADOS_EXCLUIDOS', '');
         Configuration::updateValue('JOSRA_DESIST_GRUPOS_B2B_EXCLUIDOS', '');
