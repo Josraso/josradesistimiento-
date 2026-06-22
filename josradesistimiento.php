@@ -1,6 +1,6 @@
 <?php
 /**
- * Módulo: josradesistimiento v1.1.0
+ * Módulo: josradesistimiento v1.2.0
  * Directiva (UE) 2023/2673 — Compatible PrestaShop 1.7, 8.x, 9.x
  *
  * v1.1.0:
@@ -10,6 +10,13 @@
  * - Pedidos en desistimiento excluidos del desplegable
  * - Email admin mejorado con todos los datos
  * - Textos de retención generados en PHP (sin sprintf en Smarty)
+ *
+ * v1.2.0:
+ * - Configuración legal ampliada: quién paga los gastos de devolución,
+ *   dirección de devolución, texto/URL de la política, remitente y
+ *   reply-to de los correos de notificación
+ * - Motivos de desistimiento editables por idioma desde el backoffice
+ * - "Otro motivo" puede exigir un detalle obligatorio al cliente
  */
 
 if (!defined('_PS_VERSION_')) {
@@ -24,7 +31,7 @@ class Josradesistimiento extends Module
     {
         $this->name          = 'josradesistimiento';
         $this->tab           = 'front_office_features';
-        $this->version       = '1.1.0';
+        $this->version       = '1.2.0';
         $this->author        = 'josra';
         $this->need_instance = 0;
         $this->bootstrap     = true;
@@ -152,6 +159,23 @@ class Josradesistimiento extends Module
         Configuration::updateValue('JOSRA_DESIST_EMAIL_COPIA',  '');
         Configuration::updateValue('JOSRA_DESIST_TEXTO_BOTON',  'Desistir del contrato aquí');
         Configuration::updateValue('JOSRA_DESIST_COLOR_BOTON',  '#e74c3c');
+
+        // ---- Configuración legal ampliada (v1.2.0) ----
+        Configuration::updateValue('JOSRA_DESIST_GASTOS_DEVOLUCION', 'cliente');
+        Configuration::updateValue('JOSRA_DESIST_DIRECCION_DEVOLUCION', '');
+        Configuration::updateValue('JOSRA_DESIST_POLITICA_URL', '');
+        Configuration::updateValue('JOSRA_DESIST_EMAIL_REMITENTE', '');
+        Configuration::updateValue('JOSRA_DESIST_EMAIL_REPLYTO', '');
+        Configuration::updateValue('JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO', 0);
+        foreach (Language::getLanguages(false) as $lang) {
+            Configuration::updateValue('JOSRA_DESIST_POLITICA_TEXTO_' . (int) $lang['id_lang'], '', true);
+            Configuration::updateValue(
+                'JOSRA_DESIST_MOTIVOS_' . (int) $lang['id_lang'],
+                $this->serializarMotivos($this->getMotivosPorDefecto()),
+                true
+            );
+        }
+
         return true;
     }
 
@@ -162,9 +186,16 @@ class Josradesistimiento extends Module
             'JOSRA_DESIST_EMAIL', 'JOSRA_DESIST_DIAS', 'JOSRA_DESIST_RETENCION',
             'JOSRA_DESIST_BONO_PORCENT', 'JOSRA_DESIST_EMAIL_COPIA',
             'JOSRA_DESIST_TEXTO_BOTON', 'JOSRA_DESIST_COLOR_BOTON',
+            'JOSRA_DESIST_GASTOS_DEVOLUCION', 'JOSRA_DESIST_DIRECCION_DEVOLUCION',
+            'JOSRA_DESIST_POLITICA_URL', 'JOSRA_DESIST_EMAIL_REMITENTE',
+            'JOSRA_DESIST_EMAIL_REPLYTO', 'JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO',
             self::ESTADO_CONFIG_KEY,
         ] as $key) {
             Configuration::deleteByName($key);
+        }
+        foreach (Language::getLanguages(false) as $lang) {
+            Configuration::deleteByName('JOSRA_DESIST_POLITICA_TEXTO_' . (int) $lang['id_lang']);
+            Configuration::deleteByName('JOSRA_DESIST_MOTIVOS_' . (int) $lang['id_lang']);
         }
         return true;
     }
@@ -206,21 +237,135 @@ class Josradesistimiento extends Module
     private function postProcess()
     {
         $fields = [
-            'JOSRA_DESIST_FOOTER'       => (int) Tools::getValue('JOSRA_DESIST_FOOTER'),
-            'JOSRA_DESIST_PRODUCT'      => (int) Tools::getValue('JOSRA_DESIST_PRODUCT'),
-            'JOSRA_DESIST_ACCOUNT'      => (int) Tools::getValue('JOSRA_DESIST_ACCOUNT'),
-            'JOSRA_DESIST_EMAIL'        => (int) Tools::getValue('JOSRA_DESIST_EMAIL'),
-            'JOSRA_DESIST_DIAS'         => (int) Tools::getValue('JOSRA_DESIST_DIAS'),
-            'JOSRA_DESIST_RETENCION'    => (int) Tools::getValue('JOSRA_DESIST_RETENCION'),
-            'JOSRA_DESIST_BONO_PORCENT' => (int) Tools::getValue('JOSRA_DESIST_BONO_PORCENT'),
-            'JOSRA_DESIST_EMAIL_COPIA'  => pSQL(Tools::getValue('JOSRA_DESIST_EMAIL_COPIA')),
-            'JOSRA_DESIST_TEXTO_BOTON'  => pSQL(Tools::getValue('JOSRA_DESIST_TEXTO_BOTON')),
-            'JOSRA_DESIST_COLOR_BOTON'  => pSQL(Tools::getValue('JOSRA_DESIST_COLOR_BOTON')),
+            'JOSRA_DESIST_FOOTER'                 => (int) Tools::getValue('JOSRA_DESIST_FOOTER'),
+            'JOSRA_DESIST_PRODUCT'                => (int) Tools::getValue('JOSRA_DESIST_PRODUCT'),
+            'JOSRA_DESIST_ACCOUNT'                => (int) Tools::getValue('JOSRA_DESIST_ACCOUNT'),
+            'JOSRA_DESIST_EMAIL'                   => (int) Tools::getValue('JOSRA_DESIST_EMAIL'),
+            'JOSRA_DESIST_DIAS'                    => (int) Tools::getValue('JOSRA_DESIST_DIAS'),
+            'JOSRA_DESIST_RETENCION'               => (int) Tools::getValue('JOSRA_DESIST_RETENCION'),
+            'JOSRA_DESIST_BONO_PORCENT'            => (int) Tools::getValue('JOSRA_DESIST_BONO_PORCENT'),
+            'JOSRA_DESIST_EMAIL_COPIA'             => pSQL(Tools::getValue('JOSRA_DESIST_EMAIL_COPIA')),
+            'JOSRA_DESIST_TEXTO_BOTON'             => pSQL(Tools::getValue('JOSRA_DESIST_TEXTO_BOTON')),
+            'JOSRA_DESIST_COLOR_BOTON'             => pSQL(Tools::getValue('JOSRA_DESIST_COLOR_BOTON')),
+            'JOSRA_DESIST_GASTOS_DEVOLUCION'       => in_array(Tools::getValue('JOSRA_DESIST_GASTOS_DEVOLUCION'), ['cliente', 'comercio'], true)
+                ? Tools::getValue('JOSRA_DESIST_GASTOS_DEVOLUCION') : 'cliente',
+            'JOSRA_DESIST_DIRECCION_DEVOLUCION'    => pSQL(Tools::getValue('JOSRA_DESIST_DIRECCION_DEVOLUCION'), true),
+            'JOSRA_DESIST_POLITICA_URL'            => pSQL(Tools::getValue('JOSRA_DESIST_POLITICA_URL')),
+            'JOSRA_DESIST_EMAIL_REMITENTE'         => pSQL(Tools::getValue('JOSRA_DESIST_EMAIL_REMITENTE')),
+            'JOSRA_DESIST_EMAIL_REPLYTO'           => pSQL(Tools::getValue('JOSRA_DESIST_EMAIL_REPLYTO')),
+            'JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO' => (int) Tools::getValue('JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO'),
         ];
         foreach ($fields as $key => $value) {
             Configuration::updateValue($key, $value);
         }
+
+        // Campos multi-idioma: política de desistimiento y lista de motivos
+        foreach (Language::getLanguages(false) as $lang) {
+            $idLang = (int) $lang['id_lang'];
+            Configuration::updateValue(
+                'JOSRA_DESIST_POLITICA_TEXTO_' . $idLang,
+                pSQL(Tools::getValue('JOSRA_DESIST_POLITICA_TEXTO_' . $idLang), true),
+                true
+            );
+            $lineas = $this->parsearMotivosTextarea(Tools::getValue('JOSRA_DESIST_MOTIVOS_' . $idLang, ''));
+            if (empty($lineas)) {
+                $lineas = $this->getMotivosPorDefecto();
+            }
+            if (!isset($lineas['otro'])) {
+                $lineas['otro'] = $this->l('Otro motivo');
+            }
+            Configuration::updateValue(
+                'JOSRA_DESIST_MOTIVOS_' . $idLang,
+                $this->serializarMotivos($lineas),
+                true
+            );
+        }
+
         return $this->displayConfirmation($this->l('Configuración guardada correctamente.'));
+    }
+
+    /* =========================================================
+     *  MOTIVOS DE DESISTIMIENTO (editables por idioma)
+     * ========================================================= */
+
+    /**
+     * Lista de motivos por defecto. Se usa al instalar el módulo
+     * y como fallback si un idioma no tiene motivos configurados.
+     */
+    public function getMotivosPorDefecto()
+    {
+        return [
+            'arrepentimiento' => $this->l('Me arrepentí de la compra'),
+            'talla_color'     => $this->l('Talla / color incorrecto'),
+            'no_esperado'     => $this->l('El producto no era lo esperado'),
+            'retraso'         => $this->l('Tardó demasiado en llegar'),
+            'defecto'         => $this->l('El producto llegó con defecto'),
+            'otro'            => $this->l('Otro motivo'),
+        ];
+    }
+
+    /**
+     * Devuelve la lista de motivos (key => etiqueta traducida) para un idioma.
+     * Lee la configuración editable del admin; si está vacía, usa el listado por defecto.
+     */
+    public function getMotivos($idLang = null)
+    {
+        $idLang = $idLang ?: (int) $this->context->language->id;
+        $raw = Configuration::get('JOSRA_DESIST_MOTIVOS_' . (int) $idLang);
+        $motivos = $this->deserializarMotivos($raw);
+
+        if (empty($motivos)) {
+            $motivos = $this->getMotivosPorDefecto();
+        }
+        if (!isset($motivos['otro'])) {
+            $motivos['otro'] = $this->l('Otro motivo');
+        }
+        return $motivos;
+    }
+
+    /**
+     * Convierte el textarea del admin ("clave|Etiqueta" por línea) en un array clave => etiqueta.
+     * La clave se normaliza a un slug corto (encaja en la columna `motivo` VARCHAR(20)).
+     */
+    private function parsearMotivosTextarea($texto)
+    {
+        $motivos = [];
+        $lineas = preg_split('/\r\n|\r|\n/', (string) $texto);
+        foreach ($lineas as $linea) {
+            $linea = trim($linea);
+            if ($linea === '') {
+                continue;
+            }
+            if (strpos($linea, '|') !== false) {
+                [$clave, $etiqueta] = array_map('trim', explode('|', $linea, 2));
+            } else {
+                $clave   = $linea;
+                $etiqueta = $linea;
+            }
+            $clave = Tools::substr(Tools::str2url($clave), 0, 20);
+            if ($clave === '') {
+                continue;
+            }
+            $motivos[$clave] = $etiqueta;
+        }
+        return $motivos;
+    }
+
+    public function serializarMotivos(array $motivos)
+    {
+        $lineas = [];
+        foreach ($motivos as $clave => $etiqueta) {
+            $lineas[] = $clave . '|' . $etiqueta;
+        }
+        return implode("\n", $lineas);
+    }
+
+    private function deserializarMotivos($raw)
+    {
+        if (empty($raw)) {
+            return [];
+        }
+        return $this->parsearMotivosTextarea($raw);
     }
 
     private function renderConfigForm()
@@ -236,18 +381,34 @@ class Josradesistimiento extends Module
         $helper->currentIndex  = $this->context->link->getAdminLink('AdminModules', false)
             . '&configure=' . $this->name;
         $helper->token = Tools::getAdminTokenLite('AdminModules');
+        $motivosPorIdioma = [];
+        $politicaPorIdioma = [];
+        foreach (Language::getLanguages(false) as $lang) {
+            $idLang = (int) $lang['id_lang'];
+            $motivosPorIdioma[$idLang]  = $this->serializarMotivos($this->getMotivos($idLang));
+            $politicaPorIdioma[$idLang] = Configuration::get('JOSRA_DESIST_POLITICA_TEXTO_' . $idLang);
+        }
+
         $helper->tpl_vars = [
             'fields_value' => [
-                'JOSRA_DESIST_FOOTER'       => Configuration::get('JOSRA_DESIST_FOOTER'),
-                'JOSRA_DESIST_PRODUCT'      => Configuration::get('JOSRA_DESIST_PRODUCT'),
-                'JOSRA_DESIST_ACCOUNT'      => Configuration::get('JOSRA_DESIST_ACCOUNT'),
-                'JOSRA_DESIST_EMAIL'        => Configuration::get('JOSRA_DESIST_EMAIL'),
-                'JOSRA_DESIST_DIAS'         => Configuration::get('JOSRA_DESIST_DIAS'),
-                'JOSRA_DESIST_RETENCION'    => Configuration::get('JOSRA_DESIST_RETENCION'),
-                'JOSRA_DESIST_BONO_PORCENT' => Configuration::get('JOSRA_DESIST_BONO_PORCENT'),
-                'JOSRA_DESIST_EMAIL_COPIA'  => Configuration::get('JOSRA_DESIST_EMAIL_COPIA'),
-                'JOSRA_DESIST_TEXTO_BOTON'  => Configuration::get('JOSRA_DESIST_TEXTO_BOTON'),
-                'JOSRA_DESIST_COLOR_BOTON'  => Configuration::get('JOSRA_DESIST_COLOR_BOTON'),
+                'JOSRA_DESIST_FOOTER'                 => Configuration::get('JOSRA_DESIST_FOOTER'),
+                'JOSRA_DESIST_PRODUCT'                => Configuration::get('JOSRA_DESIST_PRODUCT'),
+                'JOSRA_DESIST_ACCOUNT'                => Configuration::get('JOSRA_DESIST_ACCOUNT'),
+                'JOSRA_DESIST_EMAIL'                  => Configuration::get('JOSRA_DESIST_EMAIL'),
+                'JOSRA_DESIST_DIAS'                   => Configuration::get('JOSRA_DESIST_DIAS'),
+                'JOSRA_DESIST_RETENCION'              => Configuration::get('JOSRA_DESIST_RETENCION'),
+                'JOSRA_DESIST_BONO_PORCENT'           => Configuration::get('JOSRA_DESIST_BONO_PORCENT'),
+                'JOSRA_DESIST_EMAIL_COPIA'            => Configuration::get('JOSRA_DESIST_EMAIL_COPIA'),
+                'JOSRA_DESIST_TEXTO_BOTON'            => Configuration::get('JOSRA_DESIST_TEXTO_BOTON'),
+                'JOSRA_DESIST_COLOR_BOTON'            => Configuration::get('JOSRA_DESIST_COLOR_BOTON'),
+                'JOSRA_DESIST_GASTOS_DEVOLUCION'      => Configuration::get('JOSRA_DESIST_GASTOS_DEVOLUCION'),
+                'JOSRA_DESIST_DIRECCION_DEVOLUCION'   => Configuration::get('JOSRA_DESIST_DIRECCION_DEVOLUCION'),
+                'JOSRA_DESIST_POLITICA_URL'           => Configuration::get('JOSRA_DESIST_POLITICA_URL'),
+                'JOSRA_DESIST_EMAIL_REMITENTE'        => Configuration::get('JOSRA_DESIST_EMAIL_REMITENTE'),
+                'JOSRA_DESIST_EMAIL_REPLYTO'          => Configuration::get('JOSRA_DESIST_EMAIL_REPLYTO'),
+                'JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO' => Configuration::get('JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO'),
+                'JOSRA_DESIST_POLITICA_TEXTO'         => $politicaPorIdioma,
+                'JOSRA_DESIST_MOTIVOS'                => $motivosPorIdioma,
             ],
             'languages'   => $this->context->controller->getLanguages(),
             'id_language' => $this->context->language->id,
@@ -266,6 +427,8 @@ class Josradesistimiento extends Module
                 ],
                 'tabs' => [
                     'visibilidad' => $this->l('Visibilidad'),
+                    'legal'       => $this->l('Devoluciones y Política'),
+                    'motivos'     => $this->l('Motivos de desistimiento'),
                     'retencion'   => $this->l('Retención'),
                     'textos'      => $this->l('Textos y Diseño'),
                     'notif'       => $this->l('Notificaciones'),
@@ -302,6 +465,67 @@ class Josradesistimiento extends Module
                         'class'  => 'fixed-width-sm',
                         'suffix' => $this->l('días'),
                         'desc'   => $this->l('La Directiva establece 14 días naturales desde la entrega. No reducir sin asesoría legal.'),
+                    ],
+                    // ---- DEVOLUCIONES Y POLÍTICA ----
+                    [
+                        'type'    => 'select',
+                        'label'   => $this->l('Quién paga los gastos de devolución'),
+                        'name'    => 'JOSRA_DESIST_GASTOS_DEVOLUCION',
+                        'tab'     => 'legal',
+                        'options' => [
+                            'query' => [
+                                ['id' => 'cliente',  'name' => $this->l('El cliente')],
+                                ['id' => 'comercio', 'name' => $this->l('El comercio')],
+                            ],
+                            'id'   => 'id',
+                            'name' => 'name',
+                        ],
+                        'desc' => $this->l('Por defecto, salvo que se indique lo contrario, los gastos de devolución corren a cargo del cliente.'),
+                    ],
+                    [
+                        'type'  => 'textarea',
+                        'label' => $this->l('Dirección de devolución mostrada al cliente'),
+                        'name'  => 'JOSRA_DESIST_DIRECCION_DEVOLUCION',
+                        'tab'   => 'legal',
+                        'rows'  => 3,
+                        'desc'  => $this->l('Dirección a la que el cliente debe enviar el producto. Se muestra en el formulario y en el email de confirmación.'),
+                    ],
+                    [
+                        'type'  => 'textarea',
+                        'label' => $this->l('Texto de la política de desistimiento'),
+                        'name'  => 'JOSRA_DESIST_POLITICA_TEXTO',
+                        'tab'   => 'legal',
+                        'lang'  => true,
+                        'rows'  => 5,
+                        'desc'  => $this->l('Texto legal mostrado en el formulario. Déjalo vacío si prefieres enlazar a una URL externa.'),
+                    ],
+                    [
+                        'type'  => 'text',
+                        'label' => $this->l('URL de la política de desistimiento'),
+                        'name'  => 'JOSRA_DESIST_POLITICA_URL',
+                        'tab'   => 'legal',
+                        'desc'  => $this->l('Ej: enlace a una página CMS con las condiciones completas. Opcional si ya has rellenado el texto.'),
+                    ],
+                    // ---- MOTIVOS DE DESISTIMIENTO ----
+                    [
+                        'type'  => 'textarea',
+                        'label' => $this->l('Lista de motivos (uno por línea: clave|Etiqueta)'),
+                        'name'  => 'JOSRA_DESIST_MOTIVOS',
+                        'tab'   => 'motivos',
+                        'lang'  => true,
+                        'rows'  => 8,
+                        'desc'  => $this->l(
+                            'Formato: clave|Etiqueta visible para el cliente. Mantén la línea "otro|..." para conservar la opción "Otro motivo". ' .
+                            'Totalmente traducible: cada idioma tiene su propia lista.'
+                        ),
+                    ],
+                    [
+                        'type'   => 'switch',
+                        'label'  => $this->l('Exigir detalle cuando el cliente elige "Otro motivo"'),
+                        'name'   => 'JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO',
+                        'tab'    => 'motivos',
+                        'values' => $sw,
+                        'desc'   => $this->l('Si se activa, el campo de comentario será obligatorio al seleccionar el motivo "Otro".'),
                     ],
                     // ---- RETENCIÓN ----
                     [
@@ -359,6 +583,20 @@ class Josradesistimiento extends Module
                         'name'  => 'JOSRA_DESIST_EMAIL_COPIA',
                         'tab'   => 'notif',
                         'desc'  => $this->l('Dejar en blanco para no recibir copia. El pedido se marca automáticamente como "En desistimiento".'),
+                    ],
+                    [
+                        'type'  => 'text',
+                        'label' => $this->l('Email remitente (From)'),
+                        'name'  => 'JOSRA_DESIST_EMAIL_REMITENTE',
+                        'tab'   => 'notif',
+                        'desc'  => $this->l('Dejar en blanco para usar el email de la tienda configurado en PrestaShop.'),
+                    ],
+                    [
+                        'type'  => 'text',
+                        'label' => $this->l('Email de respuesta (Reply-To)'),
+                        'name'  => 'JOSRA_DESIST_EMAIL_REPLYTO',
+                        'tab'   => 'notif',
+                        'desc'  => $this->l('Email al que llegarán las respuestas del cliente. Dejar en blanco para no añadir reply-to.'),
                     ],
                 ],
                 'submit' => [
@@ -507,16 +745,9 @@ class Josradesistimiento extends Module
             ? $opcionLabels[$solicitud['opcion_retencion']]
             : htmlspecialchars($solicitud['opcion_retencion']);
 
-        $motivoLabels = [
-            'arrepentimiento' => 'Me arrepentí de la compra',
-            'talla_color'     => 'Talla / color incorrecto',
-            'no_esperado'     => 'El producto no era lo esperado',
-            'retraso'         => 'Tardó demasiado en llegar',
-            'defecto'         => 'El producto llegó con defecto',
-            'otro'            => 'Otro motivo',
-        ];
+        $motivoLabels = $this->getMotivos((int) $this->context->language->id);
         $motivoLabel = isset($motivoLabels[$solicitud['motivo']])
-            ? $motivoLabels[$solicitud['motivo']]
+            ? htmlspecialchars($motivoLabels[$solicitud['motivo']])
             : htmlspecialchars($solicitud['motivo']);
 
         $html = '

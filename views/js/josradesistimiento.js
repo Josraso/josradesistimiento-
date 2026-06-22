@@ -67,6 +67,7 @@
     var email  = form.querySelector('#josra_email');
     var ref    = form.querySelector('#josra_referencia');
     var motivo = form.querySelector('#josra_motivo');
+    var comentario = form.querySelector('#josra_comentario');
 
     limpiarErrores(form);
 
@@ -88,6 +89,15 @@
     if (motivo && motivo.value === '') {
       marcarError(motivo, 'Selecciona un motivo.');
       errores.push('motivo');
+    } else if (
+      motivo &&
+      motivo.value === 'otro' &&
+      motivo.getAttribute('data-otro-obligatorio') === '1' &&
+      comentario &&
+      comentario.value.trim() === ''
+    ) {
+      marcarError(comentario, 'Detalla el motivo en el campo de comentario.');
+      errores.push('comentario');
     }
 
     if (errores.length > 0) {

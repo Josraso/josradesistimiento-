@@ -8,6 +8,8 @@ Número de solicitud: #JOSRA-{id_desistimiento}
 Pedido: {referencia}
 Motivo: {motivo}
 Fecha y hora: {fecha}
+Gastos de devolución: {gastos_devolucion}
+Dirección de devolución: {direccion_devolucion}
 
 Este mensaje constituye el acuse de recibo de tu solicitud de desistimiento según el artículo 11 bis de la Directiva (UE) 2023/2673.
 

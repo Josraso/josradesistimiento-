@@ -26,6 +26,26 @@
     <p>
       {l s='Rellena el formulario y recibirás inmediatamente un email de confirmación como acuse de recibo.' mod='josradesistimiento'}
     </p>
+    {if $josra_gastos_devolucion == 'comercio'}
+      <p>{l s='Los gastos de devolución corren a cargo del comercio.' mod='josradesistimiento'}</p>
+    {else}
+      <p>{l s='Los gastos de devolución corren a cargo del cliente, salvo que se indique lo contrario.' mod='josradesistimiento'}</p>
+    {/if}
+    {if $josra_direccion_devolucion}
+      <p>
+        <strong>{l s='Dirección de devolución:' mod='josradesistimiento'}</strong>
+        {$josra_direccion_devolucion|escape:'html':'UTF-8'|nl2br}
+      </p>
+    {/if}
+    {if $josra_politica_texto}
+      <p>{$josra_politica_texto|escape:'html':'UTF-8'|nl2br}</p>
+    {elseif $josra_politica_url}
+      <p>
+        <a href="{$josra_politica_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener">
+          {l s='Consulta la política de desistimiento completa' mod='josradesistimiento'}
+        </a>
+      </p>
+    {/if}
   </div>
 
   {if isset($josra_errores) && $josra_errores}
@@ -114,7 +134,11 @@
       <label for="josra_motivo" class="required">
         {l s='Motivo del desistimiento' mod='josradesistimiento'}
       </label>
-      <select id="josra_motivo" name="josra_motivo" class="form-control custom-select" required>
+      <select id="josra_motivo"
+              name="josra_motivo"
+              class="form-control custom-select"
+              data-otro-obligatorio="{if $josra_motivo_otro_obligatorio}1{else}0{/if}"
+              required>
         <option value="">{l s='-- Selecciona un motivo --' mod='josradesistimiento'}</option>
         {foreach $josra_motivos as $key => $label}
           <option value="{$key|escape:'html':'UTF-8'}">{$label|escape:'html':'UTF-8'}</option>
@@ -126,7 +150,7 @@
     </div>
 
     <div class="form-group">
-      <label for="josra_comentario">
+      <label for="josra_comentario" id="josra_comentario_label">
         {l s='Comentario adicional (opcional)' mod='josradesistimiento'}
       </label>
       <textarea id="josra_comentario"
@@ -135,6 +159,11 @@
                 rows="3"
                 maxlength="1000"
                 placeholder="{l s='Si deseas añadir más detalles...' mod='josradesistimiento'}"></textarea>
+      {if $josra_motivo_otro_obligatorio}
+        <small class="form-text text-muted">
+          {l s='Si seleccionas "Otro motivo", deberás detallarlo aquí.' mod='josradesistimiento'}
+        </small>
+      {/if}
     </div>
 
     <div class="josra-gdpr-notice">

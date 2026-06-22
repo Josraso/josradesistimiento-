@@ -61,23 +61,27 @@ class JosradesistimientoDesistirModuleFrontController extends ModuleFrontControl
             $pedidos = $pedidosRaw;
         }
 
-        $motivos = [
-            'arrepentimiento'  => $this->module->l('Me arrepentí de la compra'),
-            'talla_color'      => $this->module->l('Talla / color incorrecto'),
-            'no_esperado'      => $this->module->l('El producto no era lo esperado'),
-            'retraso'          => $this->module->l('Tardó demasiado en llegar'),
-            'defecto'          => $this->module->l('El producto llegó con defecto'),
-            'otro'             => $this->module->l('Otro motivo'),
-        ];
+        $idLang = (int) $this->context->language->id;
+        $motivos = $this->module->getMotivos($idLang);
+        $motivoOtroObligatorio = (bool) Configuration::get('JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO');
+        $direccionDevolucion = Configuration::get('JOSRA_DESIST_DIRECCION_DEVOLUCION');
+        $gastosDevolucion = Configuration::get('JOSRA_DESIST_GASTOS_DEVOLUCION') ?: 'cliente';
+        $politicaTexto = Configuration::get('JOSRA_DESIST_POLITICA_TEXTO_' . $idLang);
+        $politicaUrl = Configuration::get('JOSRA_DESIST_POLITICA_URL');
 
         $this->context->smarty->assign([
-            'josra_dias'        => $dias,
-            'josra_retencion'   => $retencion,
-            'josra_bono_pct'    => $bonoPct,
-            'josra_nombre'      => $nombre,
-            'josra_email'       => $email,
-            'josra_pedidos'     => $pedidos,
-            'josra_motivos'     => $motivos,
+            'josra_dias'                    => $dias,
+            'josra_retencion'               => $retencion,
+            'josra_bono_pct'                => $bonoPct,
+            'josra_nombre'                  => $nombre,
+            'josra_email'                   => $email,
+            'josra_pedidos'                 => $pedidos,
+            'josra_motivos'                 => $motivos,
+            'josra_motivo_otro_obligatorio' => $motivoOtroObligatorio,
+            'josra_direccion_devolucion'    => $direccionDevolucion,
+            'josra_gastos_devolucion'       => $gastosDevolucion,
+            'josra_politica_texto'          => $politicaTexto,
+            'josra_politica_url'            => $politicaUrl,
             'josra_action_url'  => $this->context->link->getModuleLink(
                 'josradesistimiento', 'desistir', [], true
             ),
@@ -119,6 +123,11 @@ class JosradesistimientoDesistirModuleFrontController extends ModuleFrontControl
         }
         if (empty($motivo)) {
             $errores[] = $this->module->l('Por favor selecciona un motivo.');
+        } elseif ($motivo === 'otro'
+            && Configuration::get('JOSRA_DESIST_MOTIVO_OTRO_OBLIGATORIO')
+            && Tools::strlen($comentario) === 0
+        ) {
+            $errores[] = $this->module->l('Por favor detalla el motivo en el campo de comentario.');
         }
 
         // Verificar que el pedido existe y está en plazo
@@ -387,43 +396,75 @@ class JosradesistimientoDesistirModuleFrontController extends ModuleFrontControl
 
     private function enviarEmailConfirmacion($email, $nombre, $referencia, $motivo, $idDesistimiento)
     {
+        $idLang   = (int) $this->context->language->id;
         $shopName = Configuration::get('PS_SHOP_NAME');
         $shopUrl  = Tools::getShopDomainSsl(true, true) . __PS_BASE_URI__;
         $fecha    = date('d/m/Y H:i:s');
 
+        $motivos = $this->module->getMotivos($idLang);
+        $motivoLabel = isset($motivos[$motivo]) ? $motivos[$motivo] : $motivo;
+
+        $direccionDevolucion = Configuration::get('JOSRA_DESIST_DIRECCION_DEVOLUCION');
+        $gastosDevolucion = (Configuration::get('JOSRA_DESIST_GASTOS_DEVOLUCION') === 'comercio')
+            ? $this->module->l('A cargo del comercio')
+            : $this->module->l('A cargo del cliente');
+
         $templateVars = [
-            '{nombre}'           => $nombre,
-            '{email}'            => $email,
-            '{referencia}'       => $referencia,
-            '{motivo}'           => $motivo,
-            '{fecha}'            => $fecha,
-            '{shop_name}'        => $shopName,
-            '{shop_url}'         => $shopUrl,
-            '{id_desistimiento}' => $idDesistimiento,
+            '{nombre}'               => $nombre,
+            '{email}'                => $email,
+            '{referencia}'           => $referencia,
+            '{motivo}'               => $motivoLabel,
+            '{fecha}'                => $fecha,
+            '{shop_name}'            => $shopName,
+            '{shop_url}'             => $shopUrl,
+            '{id_desistimiento}'     => $idDesistimiento,
+            '{direccion_devolucion}' => $direccionDevolucion ?: $this->module->l('No especificada, se te informará por email.'),
+            '{gastos_devolucion}'    => $gastosDevolucion,
         ];
 
+        $remitente = Configuration::get('JOSRA_DESIST_EMAIL_REMITENTE');
+        $replyTo   = Configuration::get('JOSRA_DESIST_EMAIL_REPLYTO');
+
+        $fromEmail = ($remitente && Validate::isEmail($remitente)) ? $remitente : null;
+        $fromName  = $fromEmail ? $shopName : null;
+        $replyToEmail = ($replyTo && Validate::isEmail($replyTo)) ? $replyTo : null;
+
         Mail::Send(
-            (int) $this->context->language->id,
+            $idLang,
             'desistimiento_confirmacion',
             $this->module->l('Confirmación de solicitud de desistimiento — ') . $shopName,
             $templateVars,
             $email,
             $nombre,
-            null, null, null, null,
-            _PS_MODULE_DIR_ . $this->module->name . '/mails/'
+            $fromEmail,
+            $fromName,
+            null,
+            null,
+            _PS_MODULE_DIR_ . $this->module->name . '/mails/',
+            false,
+            null,
+            null,
+            $replyToEmail
         );
 
         $emailCopia = Configuration::get('JOSRA_DESIST_EMAIL_COPIA');
         if ($emailCopia && Validate::isEmail($emailCopia)) {
             Mail::Send(
-                (int) $this->context->language->id,
+                $idLang,
                 'desistimiento_aviso_comercio',
                 '[DESISTIMIENTO] Ref: ' . $referencia . ' — ' . $shopName,
                 $templateVars,
                 $emailCopia,
                 $shopName,
-                null, null, null, null,
-                _PS_MODULE_DIR_ . $this->module->name . '/mails/'
+                $fromEmail,
+                $fromName,
+                null,
+                null,
+                _PS_MODULE_DIR_ . $this->module->name . '/mails/',
+                false,
+                null,
+                null,
+                $replyToEmail
             );
         }
     }
